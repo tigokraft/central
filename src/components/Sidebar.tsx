@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   Folder,
   ChevronRight,
@@ -50,9 +50,9 @@ export default function Sidebar({ onLoadPreset, activeProcesses }: SidebarProps)
         {/* Project Explorer */}
         {isCollapsed ? (
           <div className="flex flex-col items-center gap-4 py-2 text-slate-500">
-            <Folder size={18} className="hover:text-emerald-400 cursor-pointer" title="Project Explorer" />
-            <Zap size={18} className="hover:text-emerald-400 cursor-pointer" title="Presets" />
-            <Activity size={18} className="hover:text-emerald-400 cursor-pointer" title="Process Monitor" />
+            <div title="Project Explorer"><Folder size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
+            <div title="Presets"><Zap size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
+            <div title="Process Monitor"><Activity size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
           </div>
         ) : (
           <>
