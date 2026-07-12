@@ -1,4 +1,3 @@
-import React from "react";
 import { useReactFlow } from "@xyflow/react";
 import { Play, ZoomIn, ZoomOut, Maximize, Map, Layers } from "lucide-react";
 
