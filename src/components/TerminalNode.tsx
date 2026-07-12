@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -15,7 +15,7 @@ interface TerminalNodeProps {
   data: TerminalNodeData;
 }
 
-export default function TerminalNode({ id, data }: TerminalNodeProps) {
+export default function TerminalNode({ data }: TerminalNodeProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const termInstance = useRef<Terminal | null>(null);
 
