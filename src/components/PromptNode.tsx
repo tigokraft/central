@@ -13,7 +13,7 @@ interface PromptNodeProps {
   data: PromptNodeData;
 }
 
-export default function PromptNode({ id, data }: PromptNodeProps) {
+export default function PromptNode({ data }: PromptNodeProps) {
   const [promptText, setPromptText] = useState(data.prompt || "");
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
