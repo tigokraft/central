@@ -1,4 +1,3 @@
-import React from "react";
 import { Handle, Position } from "@xyflow/react";
 import { Box, Settings, ArrowRight } from "lucide-react";
 
@@ -13,7 +12,7 @@ interface ActionContainerProps {
   data: ActionContainerData;
 }
 
-export default function ActionContainerNode({ id, data }: ActionContainerProps) {
+export default function ActionContainerNode({ data }: ActionContainerProps) {
   const actionsList = data.actions || ["Run Linter", "Execute Unit Tests", "Format Codebase"];
 
   return (
