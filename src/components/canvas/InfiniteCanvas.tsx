@@ -137,13 +137,14 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         const zoomFactor = 1 - clampedDelta * 0.0012;
         zoomViewport(zoomFactor, mouseX, mouseY);
       } else {
-        if (e.shiftKey) {
-          // Horizontal scrolling via shift+wheel
-          panViewport(-e.deltaY, 0);
-        } else {
-          // Both axes tracking (supports standard mouse wheel and trackpad swipe)
-          panViewport(-e.deltaX, -e.deltaY);
+        let dx = e.deltaX;
+        let dy = e.deltaY;
+        if (e.shiftKey && dx === 0) {
+          // Translate Shift+wheel vertical roll into horizontal pan
+          dx = dy;
+          dy = 0;
         }
+        panViewport(-dx, -dy);
       }
     };
 
@@ -175,7 +176,10 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
       },
     },
     {
-      drag: { filterTaps: true },
+      drag: {
+        filterTaps: true,
+        filterButtons: (e: any) => e.button === 0 || e.button === 1,
+      },
     }
   );
 
