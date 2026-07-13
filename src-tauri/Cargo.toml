@@ -26,9 +26,6 @@ portable-pty = "0.8"
 petgraph = "0.6"
 git2 = "0.18"
 tokio = { version = "1", features = ["full"] }
-lancedb = "0.31"
 serde_yaml = "0.9"
-arrow-array = "52"
-arrow-schema = "52"
 chrono = "0.4"
 
