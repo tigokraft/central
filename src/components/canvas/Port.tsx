@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import { useRef } from "react";
 import { useDrag } from "@use-gesture/react";
 import { useCanvasStore } from "../../store/canvasStore";
 

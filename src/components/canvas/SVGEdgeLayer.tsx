@@ -1,4 +1,3 @@
-import React from "react";
 import { useCanvasStore, getHandlePosition } from "../../store/canvasStore";
 
 function getBezierPath(
@@ -108,8 +107,9 @@ export default function SVGEdgeLayer() {
                 e.stopPropagation();
                 deleteEdge(edge.id);
               }}
-              title="Double click to delete connection"
-            />
+            >
+              <title>Double click to delete connection</title>
+            </path>
             {/* Edge Shadow/Backing */}
             <path
               d={d}
@@ -132,7 +132,7 @@ export default function SVGEdgeLayer() {
 
       {/* Render temporary connection line while dragging */}
       {draggingEdge && (() => {
-        const sourceNode = nodes.find((n) => n.id === draggingEdge.source);
+        const sourceNode = nodes.find((n) => n.id === draggingEdge.sourceId);
         if (!sourceNode) return null;
 
         const start = getHandlePosition(sourceNode, draggingEdge.sourceHandle);

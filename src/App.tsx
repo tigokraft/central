@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import Topbar from "./components/Topbar";
 import Sidebar from "./components/Sidebar";
 import InfiniteCanvas from "./components/canvas/InfiniteCanvas";

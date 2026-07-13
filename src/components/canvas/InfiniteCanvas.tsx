@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useGesture } from "@use-gesture/react";
 import {
   MousePointer,
@@ -14,7 +14,7 @@ import {
   MessageSquare,
   Brain
 } from "lucide-react";
-import { useCanvasStore } from "../../store/canvasStore";
+import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
 import SVGEdgeLayer from "./SVGEdgeLayer";
 import CanvasNodeWrapper from "./CanvasNodeWrapper";
 import Minimap from "./Minimap";
@@ -124,7 +124,7 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
   // Bind Pan & Zoom Gestures using @use-gesture/react
   const bindGestures = useGesture(
     {
-      onDrag: ({ delta: [dx, dy], event, memo }) => {
+      onDrag: ({ delta: [dx, dy], event }) => {
         const isSpaceDrag = spacePressed.current;
         const isMiddleClick = (event as MouseEvent).button === 1;
         const isHand = activeTool === "hand";
@@ -134,15 +134,11 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
           panViewport(dx, dy);
         }
       },
-      onPinch: ({ origin: [ox, oy], factor, memo }) => {
+      onPinch: ({ origin: [ox, oy], delta: [ds] }) => {
         const rect = containerRef.current?.getBoundingClientRect();
         const mouseX = rect ? ox - rect.left : undefined;
         const mouseY = rect ? oy - rect.top : undefined;
-        
-        const prevFactor = memo ?? 1;
-        const ratio = factor / prevFactor;
-        zoomViewport(ratio, mouseX, mouseY);
-        return factor;
+        zoomViewport(ds, mouseX, mouseY);
       },
       onWheel: ({ event, delta: [dx, dy] }) => {
         if (event.ctrlKey) {
