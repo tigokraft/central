@@ -144,7 +144,10 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
           dx = dy;
           dy = 0;
         }
-        panViewport(-dx, -dy);
+        // Clamp panning deltas to prevent extreme jumps (e.g. trackpad swipe velocity)
+        const clampedDx = Math.min(Math.max(dx, -50), 50);
+        const clampedDy = Math.min(Math.max(dy, -50), 50);
+        panViewport(-clampedDx, -clampedDy);
       }
     };
 
@@ -185,6 +188,12 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
 
   // Mouse Interactions for drawing custom Action Container Frames or selection marquees
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // If middle click (button 1), prevent default to block browser auto-scroll!
+    if (e.button === 1) {
+      e.preventDefault();
+      return;
+    }
+
     const target = e.target as HTMLElement;
     if (target.closest("[data-node-id]") || e.button !== 0) return;
 
