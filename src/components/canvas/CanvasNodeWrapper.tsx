@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import { useRef, useEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
 
@@ -9,6 +9,7 @@ interface CanvasNodeWrapperProps {
 
 export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperProps) {
   const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
+  const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
   const reparentNode = useCanvasStore((state) => state.reparentNode);
   const activeTool = useCanvasStore((state) => state.activeTool);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
@@ -17,13 +18,45 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isSelected = selectedNodeIds.includes(node.id);
+  const isContainer = node.type === "actionContainerNode";
+
+  // Automatically measure actual laid-out dimensions and sync to store
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      // Get physical screen client dimensions
+      const rect = el.getBoundingClientRect();
+      const zoom = useCanvasStore.getState().viewport.zoom;
+      
+      // Calculate original canvas-space coordinates
+      const width = rect.width / zoom;
+      const height = rect.height / zoom;
+
+      const storeNode = useCanvasStore.getState().nodes.find((n) => n.id === node.id);
+      if (storeNode) {
+        const widthDiff = Math.abs(storeNode.width - width);
+        const heightDiff = Math.abs(storeNode.height - height);
+        
+        // Update dimensions if they deviate significantly
+        if (widthDiff > 1.5 || heightDiff > 1.5) {
+          // Dynamic heights apply to Prompt, Terminal, and Memory cards
+          if (!isContainer) {
+            updateNodeDimensions(node.id, width, height);
+          }
+        }
+      }
+    });
+
+    resizeObserver.observe(el);
+    return () => resizeObserver.disconnect();
+  }, [node.id, isContainer, updateNodeDimensions]);
 
   const bindDrag = useDrag(
     ({ delta: [dx, dy], first, last, event, tap }) => {
-      // Only drag with select tool
       if (activeTool !== "select") return;
 
-      // Don't drag if interacting with input fields, select elements, buttons, or custom no-drag areas
       const target = event.target as HTMLElement;
       if (target.closest("input, textarea, button, select, .xterm-screen, [data-nodrag], .resize-handle")) {
         return;
@@ -31,7 +64,6 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
 
       event.stopPropagation();
 
-      // Tap Selection (Click)
       if (tap) {
         const selected = useCanvasStore.getState().selectedNodeIds;
         const isNodeSelected = selected.includes(node.id);
@@ -49,7 +81,6 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
         return;
       }
 
-      // Drag Selection initialization
       if (first) {
         const selected = useCanvasStore.getState().selectedNodeIds;
         if (!selected.includes(node.id)) {
@@ -86,7 +117,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
         left: node.x,
         top: node.y,
         width: node.width,
-        height: node.height,
+        height: isContainer ? node.height : "auto", // auto height layout for dynamic text elements
         transformOrigin: "top left",
       }}
       className={`absolute group select-none transition-shadow duration-100 ${
