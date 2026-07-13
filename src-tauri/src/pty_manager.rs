@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::io::{Read, Write};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize, MasterPty, Child};
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, State, Manager};
 
 pub struct PtyProcess {
@@ -85,7 +85,8 @@ pub fn spawn_pty(
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
     let writer_shared = Arc::new(Mutex::new(writer));
-    let child_shared = Arc::new(Mutex::new(child));
+    let child_boxed: Box<dyn Child + Send> = child;
+    let child_shared = Arc::new(Mutex::new(child_boxed));
 
     // Store PTY process information
     {
