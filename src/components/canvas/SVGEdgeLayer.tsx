@@ -71,6 +71,28 @@ export default function SVGEdgeLayer() {
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
+        <marker
+          id="arrow"
+          viewBox="0 0 10 10"
+          refX="6"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#34d399" />
+        </marker>
+        <marker
+          id="arrow-pink"
+          viewBox="0 0 10 10"
+          refX="6"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#f472b6" />
+        </marker>
       </defs>
 
       {/* Render existing connections */}
@@ -93,6 +115,10 @@ export default function SVGEdgeLayer() {
           edge.targetHandle,
           targetNode.type
         );
+
+        const isPink = sourceNode.type === "memoryGraphNote" || targetNode.type === "memoryGraphNote";
+        const strokeColor = isPink ? "#f472b6" : "#34d399";
+        const markerUrl = isPink ? "url(#arrow-pink)" : "url(#arrow)";
 
         return (
           <g key={edge.id} className="group">
@@ -121,10 +147,11 @@ export default function SVGEdgeLayer() {
             <path
               d={d}
               fill="none"
-              stroke="#34d399" /* stroke-emerald-400 */
+              stroke={strokeColor}
               strokeWidth={2}
               className="animate-dash"
               filter="url(#glow)"
+              markerEnd={markerUrl}
             />
           </g>
         );
