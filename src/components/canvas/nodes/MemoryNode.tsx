@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Brain, Search, Link as LinkIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCanvasStore, CanvasNode } from "../../../store/canvasStore";
