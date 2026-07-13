@@ -41,16 +41,15 @@ export default function CustomTitleBar() {
     <div
       onMouseDown={handleMouseDown}
       className="h-8 bg-slate-950 border-b border-slate-900 flex items-center justify-between select-none z-50 shrink-0 text-slate-400 text-xs font-sans cursor-default"
-      data-tauri-drag-region
     >
       {/* Title / Logo */}
-      <div className="flex items-center gap-2 pl-3 pointer-events-none" data-tauri-drag-region>
+      <div className="flex items-center gap-2 pl-3 pointer-events-none">
         <Zap className="text-emerald-500 w-3.5 h-3.5" />
         <span className="font-semibold tracking-wider text-[10px] uppercase text-slate-300">Central</span>
       </div>
 
       {/* Drag Region Filler */}
-      <div className="flex-1 h-full" data-tauri-drag-region />
+      <div className="flex-1 h-full" />
 
       {/* Window Action Controls */}
       <div className="flex items-center h-full">

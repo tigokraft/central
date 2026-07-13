@@ -127,12 +127,9 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     const handleWheelNative = (e: WheelEvent) => {
       e.preventDefault();
       if (e.ctrlKey) {
-        // Zoom centered on current mouse coordinates
         const rect = container.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
-        
-        // Clamp wheel delta to prevent large jumps, then scale smoothly
         const clampedDelta = Math.min(Math.max(e.deltaY, -80), 80);
         const zoomFactor = 1 - clampedDelta * 0.0012;
         zoomViewport(zoomFactor, mouseX, mouseY);
@@ -140,14 +137,11 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         let dx = e.deltaX;
         let dy = e.deltaY;
         if (e.shiftKey && dx === 0) {
-          // Translate Shift+wheel vertical roll into horizontal pan
           dx = dy;
           dy = 0;
         }
-        // Clamp panning deltas to prevent extreme jumps (e.g. trackpad swipe velocity)
-        const clampedDx = Math.min(Math.max(dx, -50), 50);
-        const clampedDy = Math.min(Math.max(dy, -50), 50);
-        panViewport(-clampedDx, -clampedDy);
+        // Scale delta for smoother native panning without clamping jumps
+        panViewport(-dx * 0.5, -dy * 0.5);
       }
     };
 
@@ -169,28 +163,28 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     {
       onDrag: ({ delta: [dx, dy], event }) => {
         const isSpaceDrag = spacePressed.current;
-        const isMiddleClick = (event as MouseEvent).button === 1;
         const isHand = activeTool === "hand";
 
-        if (isHand || isSpaceDrag || isMiddleClick) {
+        if (isHand || isSpaceDrag) {
           event.preventDefault();
           panViewport(dx, dy);
         }
       },
     },
     {
-      drag: {
-        filterTaps: true,
-        filterButtons: (e: any) => e.button === 0 || e.button === 1,
-      },
+      drag: { filterTaps: true },
     }
   );
 
+  const middlePanRef = useRef({ isDown: false, lastX: 0, lastY: 0 });
+
   // Mouse Interactions for drawing custom Action Container Frames or selection marquees
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    // If middle click (button 1), prevent default to block browser auto-scroll!
+    // Manual middle click pan initialization
     if (e.button === 1) {
       e.preventDefault();
+      middlePanRef.current = { isDown: true, lastX: e.clientX, lastY: e.clientY };
+      containerRef.current?.setPointerCapture(e.pointerId);
       return;
     }
 
@@ -227,27 +221,49 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     }
   };
 
+  const updateMarqueeSelection = (startX: number, startY: number, currentX: number, currentY: number) => {
+    const left = Math.min(startX, currentX);
+    const top = Math.min(startY, currentY);
+    const right = Math.max(startX, currentX);
+    const bottom = Math.max(startY, currentY);
+
+    const overlapped = nodes
+      .filter((n) => n.x < right && n.x + n.width > left && n.y < bottom && n.y + n.height > top)
+      .map((n) => n.id);
+
+    setSelectedNodeIds(overlapped);
+  };
+
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const rect = containerRef.current!.getBoundingClientRect();
+    // Manual middle click pan handling
+    if (middlePanRef.current.isDown) {
+      const dx = e.clientX - middlePanRef.current.lastX;
+      const dy = e.clientY - middlePanRef.current.lastY;
+      middlePanRef.current.lastX = e.clientX;
+      middlePanRef.current.lastY = e.clientY;
+      panViewport(dx, dy);
+      return;
+    }
+
+    if (!containerRef.current?.hasPointerCapture(e.pointerId)) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
     const clientX = e.clientX - rect.left;
     const clientY = e.clientY - rect.top;
 
     const canvasX = (clientX - viewport.x) / viewport.zoom;
     const canvasY = (clientY - viewport.y) / viewport.zoom;
 
-    if (frameDrawing) {
+    if (activeTool === "frame" && frameDrawing) {
       setFrameDrawing((prev) =>
         prev ? { ...prev, currentX: canvasX, currentY: canvasY } : null
       );
-    } else if (selectionBox) {
+    } else if (activeTool === "select" && selectionBox) {
       setSelectionBox((prev) =>
         prev ? { ...prev, currentX: canvasX, currentY: canvasY } : null
       );
 
       // Perform real-time marquee overlapping selection checks
-      const left = Math.min(selectionBox.startX, canvasX);
-      const top = Math.min(selectionBox.startY, canvasY);
-      const right = Math.max(selectionBox.startX, canvasX);
       const bottom = Math.max(selectionBox.startY, canvasY);
 
       const overlapped = nodes
@@ -259,6 +275,12 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (middlePanRef.current.isDown) {
+      middlePanRef.current.isDown = false;
+      containerRef.current?.releasePointerCapture(e.pointerId);
+      return;
+    }
+
     containerRef.current!.releasePointerCapture(e.pointerId);
 
     if (frameDrawing) {
