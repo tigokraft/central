@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -11,19 +11,23 @@ import {
   Edge,
   Node,
   ReactFlowProvider,
-  BackgroundVariant
+  BackgroundVariant,
+  useReactFlow
 } from "@xyflow/react";
 import Topbar from "./components/Topbar";
 import Sidebar from "./components/Sidebar";
 import TerminalNode from "./components/TerminalNode";
 import ActionContainerNode from "./components/ActionContainerNode";
 import PromptNode from "./components/PromptNode";
+import MemoryGraphNote from "./components/MemoryGraphNote";
+import { Terminal, Box, MessageSquare, Brain } from "lucide-react";
 
 // Register custom node types
 const nodeTypes = {
   terminalNode: TerminalNode,
   actionContainerNode: ActionContainerNode,
   promptNode: PromptNode,
+  memoryGraphNote: MemoryGraphNote,
 };
 
 const initialNodes: Node[] = [
@@ -112,6 +116,63 @@ function FlowWrapper({ setActiveProcesses, registerOnLoadPreset }: FlowWrapperPr
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [showMinimap, setShowMinimap] = useState(true);
+  const { screenToFlowPosition } = useReactFlow();
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Close context menu when user clicks anywhere in the window
+  useEffect(() => {
+    const handleClose = () => setContextMenu(null);
+    window.addEventListener("click", handleClose);
+    return () => window.removeEventListener("click", handleClose);
+  }, []);
+
+  const handleAddNode = useCallback(
+    (type: "terminalNode" | "actionContainerNode" | "promptNode" | "memoryGraphNote") => {
+      if (!contextMenu) return;
+
+      const position = screenToFlowPosition({
+        x: contextMenu.x,
+        y: contextMenu.y,
+      });
+
+      let label = "";
+      let data: any = {};
+
+      switch (type) {
+        case "terminalNode":
+          label = "Terminal Console";
+          data = { label, command: "echo hello", isRunning: false };
+          break;
+        case "actionContainerNode":
+          label = "Pipeline Container";
+          data = {
+            label,
+            description: "Custom pipeline tasks.",
+            actions: ["npm run lint", "pnpm test"],
+          };
+          break;
+        case "promptNode":
+          label = "Prompt Input";
+          data = { label, prompt: "Enter instructions here..." };
+          break;
+        case "memoryGraphNote":
+          label = "Memory Graph Note";
+          data = { label, note: "Key recollections and records..." };
+          break;
+      }
+
+      const newNode: Node = {
+        id: `${type}-${Date.now()}`,
+        type,
+        position,
+        data,
+      };
+
+      setNodes((nds) => [...nds, newNode]);
+      setContextMenu(null);
+    },
+    [contextMenu, screenToFlowPosition, setNodes]
+  );
 
   // Sync active processes with Sidebar
   React.useEffect(() => {
@@ -309,6 +370,15 @@ function FlowWrapper({ setActiveProcesses, registerOnLoadPreset }: FlowWrapperPr
           nodeTypes={nodeTypes}
           fitView
           className="bg-slate-900"
+          onPaneContextMenu={(event) => {
+            event.preventDefault();
+            setContextMenu({
+              x: event.clientX,
+              y: event.clientY,
+            });
+          }}
+          onPaneClick={() => setContextMenu(null)}
+          onNodeDragStart={() => setContextMenu(null)}
         >
           <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#334155" />
           <Controls className="bg-slate-950 border border-slate-800 text-slate-200 fill-slate-200" style={{ left: 16 }} />
@@ -322,6 +392,43 @@ function FlowWrapper({ setActiveProcesses, registerOnLoadPreset }: FlowWrapperPr
           )}
         </ReactFlow>
       </div>
+
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-slate-950/95 backdrop-blur-md border border-slate-800 rounded-lg shadow-2xl py-1.5 w-52 select-none"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => handleAddNode("terminalNode")}
+            className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <Terminal size={12} className="text-emerald-500" />
+            Add Terminal Node
+          </button>
+          <button
+            onClick={() => handleAddNode("actionContainerNode")}
+            className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <Box size={12} className="text-blue-500" />
+            Add Action Container
+          </button>
+          <button
+            onClick={() => handleAddNode("promptNode")}
+            className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <MessageSquare size={12} className="text-purple-500" />
+            Add Prompt Node
+          </button>
+          <button
+            onClick={() => handleAddNode("memoryGraphNote")}
+            className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <Brain size={12} className="text-pink-500" />
+            Add Memory Graph Note
+          </button>
+        </div>
+      )}
       <div className="absolute top-20 right-6 pointer-events-none select-none z-0">
         <div className="text-[120px] font-bold text-slate-800/10 font-mono tracking-wider">
           CENTRAL
