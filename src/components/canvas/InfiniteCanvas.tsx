@@ -20,7 +20,7 @@ import Minimap from "./Minimap";
 import TerminalNode from "./nodes/TerminalNode";
 import ActionContainerNode from "./nodes/ActionContainerNode";
 import PromptNode from "./nodes/PromptNode";
-import MemoryGraphNote from "./nodes/MemoryGraphNote";
+import MemoryNode from "./nodes/MemoryNode";
 
 interface InfiniteCanvasProps {
   showMinimap: boolean;
@@ -337,8 +337,8 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         return <ActionContainerNode node={node} />;
       case "promptNode":
         return <PromptNode node={node} />;
-      case "memoryGraphNote":
-        return <MemoryGraphNote node={node} />;
+      case "memoryNode":
+        return <MemoryNode node={node} />;
     }
   };
 
@@ -537,11 +537,11 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
                 Add Prompt Node
               </button>
               <button
-                onClick={() => handleAddNodeFromMenu("memoryGraphNote")}
+                onClick={() => handleAddNodeFromMenu("memoryNode")}
                 className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
               >
                 <Brain size={12} className="text-pink-500" />
-                Add Memory Graph Note
+                Add Neural Memory
               </button>
             </>
           ) : (
