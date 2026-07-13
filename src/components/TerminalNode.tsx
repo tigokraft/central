@@ -84,13 +84,6 @@ export default function TerminalNode({ id, data }: TerminalNodeProps) {
 
         // Spawn interactive shell
         await invoke("spawn_pty", { nodeId: id, cols, rows });
-
-        // Auto-run starting command if configured
-        if (data.command) {
-          setTimeout(() => {
-            invoke("write_pty", { nodeId: id, data: data.command + "\r" }).catch(console.error);
-          }, 400);
-        }
       } catch (err) {
         console.error("Failed to initialize PTY:", err);
         term.writeln(`\r\n\x1b[31m[Error] Failed to initialize PTY: ${err}\x1b[0m`);
@@ -106,7 +99,13 @@ export default function TerminalNode({ id, data }: TerminalNodeProps) {
       invoke("destroy_pty", { nodeId: id }).catch(console.error);
       term.dispose();
     };
-  }, [id, data.command]);
+  }, [id]);
+
+  useEffect(() => {
+    if (data.isRunning && data.command) {
+      invoke("write_pty", { nodeId: id, data: data.command + "\r" }).catch(console.error);
+    }
+  }, [id, data.isRunning, data.command]);
 
   const handleRunCommand = () => {
     if (data.command) {
