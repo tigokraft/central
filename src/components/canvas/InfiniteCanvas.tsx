@@ -264,13 +264,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
       );
 
       // Perform real-time marquee overlapping selection checks
-      const bottom = Math.max(selectionBox.startY, canvasY);
-
-      const overlapped = nodes
-        .filter((n) => n.x < right && n.x + n.width > left && n.y < bottom && n.y + n.height > top)
-        .map((n) => n.id);
-
-      setSelectedNodeIds(overlapped);
+      updateMarqueeSelection(selectionBox.startX, selectionBox.startY, canvasX, canvasY);
     }
   };
 
