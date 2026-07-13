@@ -1,17 +1,22 @@
-import { useReactFlow } from "@xyflow/react";
 import { Play, ZoomIn, ZoomOut, Maximize, Map, Layers } from "lucide-react";
+import { useCanvasStore } from "../store/canvasStore";
 
 interface TopbarProps {
   showMinimap: boolean;
   setShowMinimap: (show: boolean) => void;
-  onRunGraph: () => void;
 }
 
-export default function Topbar({ showMinimap, setShowMinimap, onRunGraph }: TopbarProps) {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
+export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
+  const zoomViewport = useCanvasStore((state) => state.zoomViewport);
+  const setViewport = useCanvasStore((state) => state.setViewport);
+  const runPipeline = useCanvasStore((state) => state.runPipeline);
+
+  const resetView = () => {
+    setViewport({ x: 100, y: 100, zoom: 1 });
+  };
 
   return (
-    <div className="h-14 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-4 flex items-center justify-between select-none z-10">
+    <div className="h-14 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-4 flex items-center justify-between select-none z-10 shrink-0">
       {/* Workspace Selector */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg">
@@ -27,8 +32,8 @@ export default function Topbar({ showMinimap, setShowMinimap, onRunGraph }: Topb
       {/* Center Action */}
       <div>
         <button
-          onClick={onRunGraph}
-          className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-slate-950 font-semibold px-4 py-1.5 rounded-lg text-xs tracking-wider transition-all duration-200 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] cursor-pointer"
+          onClick={runPipeline}
+          className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-slate-950 font-semibold px-4 py-1.5 rounded-lg text-xs tracking-wider transition-all duration-200 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] cursor-pointer animate-pulse-slow"
         >
           <Play size={12} fill="currentColor" />
           RUN EXECUTION GRAPH
@@ -40,21 +45,21 @@ export default function Topbar({ showMinimap, setShowMinimap, onRunGraph }: Topb
         {/* Zoom Controls */}
         <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
           <button
-            onClick={() => zoomIn()}
+            onClick={() => zoomViewport(1.1)}
             title="Zoom In"
             className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
           >
             <ZoomIn size={14} />
           </button>
           <button
-            onClick={() => zoomOut()}
+            onClick={() => zoomViewport(0.9)}
             title="Zoom Out"
             className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
           >
             <ZoomOut size={14} />
           </button>
           <button
-            onClick={() => fitView({ duration: 400 })}
+            onClick={resetView}
             title="Fit View"
             className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
           >
