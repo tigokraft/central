@@ -8,7 +8,7 @@ import { useCanvasStore } from "./store/canvasStore";
 export default function App() {
   const nodes = useCanvasStore((state) => state.nodes);
   const loadPreset = useCanvasStore((state) => state.loadPreset);
-  const [showMinimap, setShowMinimap] = useState(true);
+  const [showMinimap, setShowMinimap] = useState(false);
 
   // Sync active processes with Sidebar monitor
   const activeProcesses = nodes

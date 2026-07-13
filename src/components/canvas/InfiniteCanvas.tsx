@@ -1,5 +1,4 @@
-import { useRef, useState, useEffect } from "react";
-import { useGesture } from "@use-gesture/react";
+import React, { useRef, useState, useEffect } from "react";
 import {
   MousePointer,
   Hand,
@@ -38,6 +37,8 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const addNode = useCanvasStore((state) => state.addNode);
   const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
   const setSelectedNodeIds = useCanvasStore((state) => state.setSelectedNodeIds);
+  const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
+  const deleteNode = useCanvasStore((state) => state.deleteNode);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const spacePressed = useRef(false);
@@ -101,6 +102,11 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         setActiveTool("hand");
       } else if (e.key.toLowerCase() === "f") {
         setActiveTool("frame");
+      } else if (e.key === "Backspace" || e.key === "Delete") {
+        if (selectedNodeIds.length > 0) {
+          selectedNodeIds.forEach((id) => deleteNode(id));
+          setSelectedNodeIds([]);
+        }
       }
     };
 
@@ -158,23 +164,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     return () => window.removeEventListener("click", closeMenu);
   }, []);
 
-  // Bind Pan Dragging using @use-gesture/react (leaving zoom and scroll wheel to native)
-  const bindGestures = useGesture(
-    {
-      onDrag: ({ delta: [dx, dy], event }) => {
-        const isSpaceDrag = spacePressed.current;
-        const isHand = activeTool === "hand";
 
-        if (isHand || isSpaceDrag) {
-          event.preventDefault();
-          panViewport(dx, dy);
-        }
-      },
-    },
-    {
-      drag: { filterTaps: true },
-    }
-  );
 
   const middlePanRef = useRef({ isDown: false, lastX: 0, lastY: 0 });
 
@@ -435,7 +425,6 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         onPointerUp={handlePointerUp}
         onContextMenu={handleContextMenu}
         className={`w-full h-full relative overflow-hidden select-none outline-none ${cursorClass}`}
-        {...(bindGestures() as any)}
       >
         {/* Figma Infinite Dot Grid Background */}
         <div
@@ -455,7 +444,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
             transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
             transformOrigin: "0 0",
           }}
-          className="absolute inset-0 pointer-events-none"
+          className="absolute inset-0"
         >
           {/* Custom SVG Edge Layer */}
           <SVGEdgeLayer />
