@@ -3,6 +3,11 @@ import { Handle, Position } from "@xyflow/react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as TerminalIcon, Play } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+
+// Import xterm CSS styles so that it renders properly
+import "@xterm/xterm/css/xterm.css";
 
 export type TerminalNodeData = {
   label: string;
@@ -15,7 +20,7 @@ interface TerminalNodeProps {
   data: TerminalNodeData;
 }
 
-export default function TerminalNode({ data }: TerminalNodeProps) {
+export default function TerminalNode({ id, data }: TerminalNodeProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const termInstance = useRef<Terminal | null>(null);
 
@@ -34,6 +39,7 @@ export default function TerminalNode({ data }: TerminalNodeProps) {
       cursorBlink: true,
       rows: 8,
       cols: 40,
+      convertEol: true, // convert \n to \r\n
     });
 
     const fitAddon = new FitAddon();
@@ -41,16 +47,72 @@ export default function TerminalNode({ data }: TerminalNodeProps) {
     term.open(terminalRef.current);
     fitAddon.fit();
 
-    term.writeln(`$ ${data.command || "echo 'Starting process...'"}`);
-    term.writeln("\x1b[33m[info]\x1b[0m Initializing local process...");
-    term.writeln("\x1b[32m[success]\x1b[0m Ready. Click 'Run' to execute.");
-
     termInstance.current = term;
 
+    // Send local keystrokes directly to the PTY
+    const onDataDisposable = term.onData((input) => {
+      invoke("write_pty", { nodeId: id, data: input }).catch(console.error);
+    });
+
+    let unlistenOutput: (() => void) | null = null;
+    let unlistenExit: (() => void) | null = null;
+
+    const setupPty = async () => {
+      try {
+        const cols = term.cols || 40;
+        const rows = term.rows || 8;
+
+        // Subscribe to PTY output stream
+        unlistenOutput = await listen<{ node_id: string; data: string }>(
+          "pty-output",
+          (event) => {
+            if (event.payload.node_id === id) {
+              term.write(event.payload.data);
+            }
+          }
+        );
+
+        // Subscribe to PTY exit notification
+        unlistenExit = await listen<{ node_id: string }>(
+          "pty-exit",
+          (event) => {
+            if (event.payload.node_id === id) {
+              term.writeln("\r\n\x1b[31m[Process Exited]\x1b[0m");
+            }
+          }
+        );
+
+        // Spawn interactive shell
+        await invoke("spawn_pty", { nodeId: id, cols, rows });
+
+        // Auto-run starting command if configured
+        if (data.command) {
+          setTimeout(() => {
+            invoke("write_pty", { nodeId: id, data: data.command + "\r" }).catch(console.error);
+          }, 400);
+        }
+      } catch (err) {
+        console.error("Failed to initialize PTY:", err);
+        term.writeln(`\r\n\x1b[31m[Error] Failed to initialize PTY: ${err}\x1b[0m`);
+      }
+    };
+
+    setupPty();
+
     return () => {
+      onDataDisposable.dispose();
+      if (unlistenOutput) unlistenOutput();
+      if (unlistenExit) unlistenExit();
+      invoke("destroy_pty", { nodeId: id }).catch(console.error);
       term.dispose();
     };
-  }, [data.command]);
+  }, [id, data.command]);
+
+  const handleRunCommand = () => {
+    if (data.command) {
+      invoke("write_pty", { nodeId: id, data: data.command + "\r" }).catch(console.error);
+    }
+  };
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-lg shadow-2xl overflow-hidden min-w-[320px] transition-all hover:border-emerald-500/50 nodrag">
@@ -81,7 +143,10 @@ export default function TerminalNode({ data }: TerminalNodeProps) {
             {data.label || "Terminal Node"}
           </span>
         </div>
-        <button className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-500 transition-colors">
+        <button
+          onClick={handleRunCommand}
+          className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-500 transition-colors cursor-pointer"
+        >
           <Play size={10} />
         </button>
       </div>
