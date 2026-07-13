@@ -14,6 +14,8 @@ export interface CanvasNode {
     note?: string;
     description?: string;
     actions?: string[];
+    facts?: string[];
+    entities?: string[];
     command?: string;
     isRunning?: boolean;
     status?: "idle" | "running" | "error";

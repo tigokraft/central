@@ -12,7 +12,6 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
   const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
   const reparentNode = useCanvasStore((state) => state.reparentNode);
   const activeTool = useCanvasStore((state) => state.activeTool);
-  const deleteNode = useCanvasStore((state) => state.deleteNode);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const setSelectedNodeIds = useCanvasStore((state) => state.setSelectedNodeIds);
 
