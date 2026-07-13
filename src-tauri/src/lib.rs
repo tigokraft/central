@@ -1,4 +1,5 @@
 mod pty_manager;
+pub mod memory;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -27,6 +28,10 @@ pub fn run() {
             pty_manager::write_pty,
             pty_manager::resize_pty,
             pty_manager::destroy_pty,
+            memory::engine::create_memory_record,
+            memory::engine::query_memory_graph,
+            memory::engine::supersede_record,
+            memory::engine::export_to_obsidian,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
