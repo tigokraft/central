@@ -89,9 +89,16 @@ interface CanvasState {
   // Presets & Execution
   loadPreset: (presetName: string) => void;
   runPipeline: () => void;
+
+  // Selection
+  selectedNodeIds: string[];
+  setSelectedNodeIds: (ids: string[]) => void;
 }
 
 export const useCanvasStore = create<CanvasState>((set) => ({
+  selectedNodeIds: [],
+  setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids }),
+
   viewport: { x: 0, y: 0, zoom: 1 },
   nodes: [
     {
@@ -245,13 +252,20 @@ export const useCanvasStore = create<CanvasState>((set) => ({
       const dx = dragDelta ? dragDelta.dx : x - node.x;
       const dy = dragDelta ? dragDelta.dy : y - node.y;
 
+      const isSelected = state.selectedNodeIds.includes(id);
+      const nodesToMove = isSelected ? state.selectedNodeIds : [id];
+
       return {
         nodes: state.nodes.map((n) => {
-          if (n.id === id) {
-            return { ...n, x, y };
+          if (nodesToMove.includes(n.id)) {
+            // Prevent double moving if parent is also selected and being moved
+            if (n.parentId && nodesToMove.includes(n.parentId)) {
+              return n;
+            }
+            return { ...n, x: n.x + dx, y: n.y + dy };
           }
-          // Move children relative to their parent
-          if (n.parentId === id) {
+          // Move children relative to their parent if the parent is moved but child is not in selection
+          if (n.parentId && nodesToMove.includes(n.parentId) && !nodesToMove.includes(n.id)) {
             return { ...n, x: n.x + dx, y: n.y + dy };
           }
           return n;
