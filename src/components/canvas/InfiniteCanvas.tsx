@@ -132,8 +132,9 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
         
-        // Exponential scroll mapping for extreme smoothness
-        const zoomFactor = Math.exp(-e.deltaY * 0.0035);
+        // Clamp wheel delta to prevent large jumps, then scale smoothly
+        const clampedDelta = Math.min(Math.max(e.deltaY, -80), 80);
+        const zoomFactor = 1 - clampedDelta * 0.0012;
         zoomViewport(zoomFactor, mouseX, mouseY);
       } else {
         if (e.shiftKey) {
@@ -159,7 +160,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     return () => window.removeEventListener("click", closeMenu);
   }, []);
 
-  // Bind Pan Dragging & Pinch using @use-gesture/react (leaving zoom wheel to native)
+  // Bind Pan Dragging using @use-gesture/react (leaving zoom and scroll wheel to native)
   const bindGestures = useGesture(
     {
       onDrag: ({ delta: [dx, dy], event }) => {
@@ -172,16 +173,9 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
           panViewport(dx, dy);
         }
       },
-      onPinch: ({ origin: [ox, oy], delta: [ds] }) => {
-        const rect = containerRef.current?.getBoundingClientRect();
-        const mouseX = rect ? ox - rect.left : undefined;
-        const mouseY = rect ? oy - rect.top : undefined;
-        zoomViewport(ds, mouseX, mouseY);
-      },
     },
     {
       drag: { filterTaps: true },
-      pinch: { eventOptions: { passive: false } },
     }
   );
 
