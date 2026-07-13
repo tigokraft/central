@@ -15,6 +15,16 @@ export default function CustomTitleBar() {
 
   const appWindow = getCurrentWindow();
 
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Only trigger drag on left-click on the bar background
+    if (e.button === 0) {
+      const target = e.target as HTMLElement;
+      if (target.closest("button")) return; // Don't drag if clicking title controls
+
+      appWindow.startDragging().catch(console.error);
+    }
+  };
+
   const handleMinimize = () => {
     appWindow.minimize().catch(console.error);
   };
@@ -29,7 +39,8 @@ export default function CustomTitleBar() {
 
   return (
     <div
-      className="h-8 bg-slate-950 border-b border-slate-900 flex items-center justify-between select-none z-50 shrink-0 text-slate-400 text-xs font-sans"
+      onMouseDown={handleMouseDown}
+      className="h-8 bg-slate-950 border-b border-slate-900 flex items-center justify-between select-none z-50 shrink-0 text-slate-400 text-xs font-sans cursor-default"
       data-tauri-drag-region
     >
       {/* Title / Logo */}
@@ -39,7 +50,7 @@ export default function CustomTitleBar() {
       </div>
 
       {/* Drag Region Filler */}
-      <div className="flex-1 h-full cursor-default" data-tauri-drag-region />
+      <div className="flex-1 h-full" data-tauri-drag-region />
 
       {/* Window Action Controls */}
       <div className="flex items-center h-full">
