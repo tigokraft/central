@@ -28,6 +28,25 @@ export interface CanvasEdge {
   targetHandle: string;
 }
 
+export function getHandlePosition(node: CanvasNode, handleId: string): { x: number; y: number } {
+  if (node.type === "terminalNode") {
+    if (handleId === "trigger" || handleId === "input" || handleId === "top" || handleId === "done") {
+      // If it is top, trigger, input
+      if (handleId === "done") {
+        return { x: node.x + node.width / 2, y: node.y + node.height };
+      }
+      return { x: node.x + node.width / 2, y: node.y };
+    }
+    // Bottom handles
+    return { x: node.x + node.width / 2, y: node.y + node.height };
+  }
+  // Default to Left input, Right output for other nodes
+  if (handleId === "trigger" || handleId === "input" || handleId === "left") {
+    return { x: node.x, y: node.y + node.height / 2 };
+  }
+  return { x: node.x + node.width, y: node.y + node.height / 2 };
+}
+
 interface Viewport {
   x: number;
   y: number;
