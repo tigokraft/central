@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useDrag } from "@use-gesture/react";
-import { useCanvasStore } from "../../store/canvasStore";
+import { useCanvasStore, getHandlePosition } from "../../store/canvasStore";
 
 interface PortProps {
   nodeId: string;
@@ -32,7 +32,6 @@ export default function Port({ nodeId, handleId, type, color = "emerald", classN
       startX = (rect.left + rect.width / 2 - viewport.x) / viewport.zoom;
       startY = (rect.top + rect.height / 2 - viewport.y) / viewport.zoom;
     } else {
-      // Fallback
       startX = (x - viewport.x) / viewport.zoom;
       startY = (y - viewport.y) / viewport.zoom;
     }
@@ -42,25 +41,43 @@ export default function Port({ nodeId, handleId, type, color = "emerald", classN
 
     if (active) {
       if (!store.draggingEdge) {
-        startDraggingEdge(nodeId, handleId, startX, startY);
+        // Grab/Reconnect: Check if this is a target port with an existing edge
+        const existingEdge = store.edges.find(
+          (e) => e.target === nodeId && e.targetHandle === handleId
+        );
+
+        if (type === "target" && existingEdge) {
+          const sourceNode = store.nodes.find((n) => n.id === existingEdge.source);
+          if (sourceNode) {
+            const start = getHandlePosition(sourceNode, existingEdge.sourceHandle);
+            store.deleteEdge(existingEdge.id);
+            // Start dragging from the original source socket
+            startDraggingEdge(existingEdge.source, existingEdge.sourceHandle, start.x, start.y);
+          } else {
+            startDraggingEdge(nodeId, handleId, startX, startY);
+          }
+        } else {
+          // Normal drag start
+          startDraggingEdge(nodeId, handleId, startX, startY);
+        }
       } else {
         updateDraggingEdge(currentX, currentY);
       }
     }
 
     if (last) {
-      const el = document.elementFromPoint(x, y);
-      const portEl = el?.closest("[data-port-id]");
-      if (portEl) {
-        const targetNodeId = portEl.getAttribute("data-node-id")!;
-        const targetHandleId = portEl.getAttribute("data-handle-id")!;
-        const targetPortType = portEl.getAttribute("data-port-type")!;
+      const dragging = useCanvasStore.getState().draggingEdge;
+      if (dragging) {
+        const el = document.elementFromPoint(x, y);
+        const portEl = el?.closest("[data-port-id]");
+        if (portEl) {
+          const targetNodeId = portEl.getAttribute("data-node-id")!;
+          const targetHandleId = portEl.getAttribute("data-handle-id")!;
+          const targetPortType = portEl.getAttribute("data-port-type")!;
 
-        if (targetNodeId !== nodeId) {
-          if (type === "source" && targetPortType === "target") {
-            addEdge(nodeId, handleId, targetNodeId, targetHandleId);
-          } else if (type === "target" && targetPortType === "source") {
-            addEdge(targetNodeId, targetHandleId, nodeId, handleId);
+          // Can only connect to target (input) handles on other nodes
+          if (targetNodeId !== dragging.sourceId && targetPortType === "target") {
+            addEdge(dragging.sourceId, dragging.sourceHandle, targetNodeId, targetHandleId);
           }
         }
       }
