@@ -4,7 +4,6 @@ import {
   MousePointer,
   Hand,
   Square,
-  Play,
   ZoomIn,
   ZoomOut,
   Maximize,
@@ -40,7 +39,7 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
   const setActiveTool = useCanvasStore((state) => state.setActiveTool);
   const addNode = useCanvasStore((state) => state.addNode);
   const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
-  const runPipeline = useCanvasStore((state) => state.runPipeline);
+  const setSelectedNodeIds = useCanvasStore((state) => state.setSelectedNodeIds);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const spacePressed = useRef(false);
@@ -55,6 +54,14 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
 
   // Frame creation state
   const [frameDrawing, setFrameDrawing] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+  } | null>(null);
+
+  // Marquee selection box state
+  const [selectionBox, setSelectionBox] = useState<{
     startX: number;
     startY: number;
     currentX: number;
@@ -114,6 +121,39 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
     };
   }, [setActiveTool]);
 
+  // Butter-smooth Native Wheel panning, trackpad pinch support, and horizontal Shift+wheel scroll
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey) {
+        // Zoom centered on current mouse coordinates
+        const rect = container.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        // Exponential scroll mapping for extreme smoothness
+        const zoomFactor = Math.exp(-e.deltaY * 0.0035);
+        zoomViewport(zoomFactor, mouseX, mouseY);
+      } else {
+        if (e.shiftKey) {
+          // Horizontal scrolling via shift+wheel
+          panViewport(-e.deltaY, 0);
+        } else {
+          // Both axes tracking (supports standard mouse wheel and trackpad swipe)
+          panViewport(-e.deltaX, -e.deltaY);
+        }
+      }
+    };
+
+    container.addEventListener("wheel", handleWheelNative, { passive: false });
+    return () => {
+      container.removeEventListener("wheel", handleWheelNative);
+    };
+  }, [panViewport, zoomViewport]);
+
   // Context Menu and Clicks closing
   useEffect(() => {
     const closeMenu = () => setContextMenu(null);
@@ -121,7 +161,7 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
     return () => window.removeEventListener("click", closeMenu);
   }, []);
 
-  // Bind Pan & Zoom Gestures using @use-gesture/react
+  // Bind Pan Dragging & Pinch using @use-gesture/react (leaving zoom wheel to native)
   const bindGestures = useGesture(
     {
       onDrag: ({ delta: [dx, dy], event }) => {
@@ -140,32 +180,15 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
         const mouseY = rect ? oy - rect.top : undefined;
         zoomViewport(ds, mouseX, mouseY);
       },
-      onWheel: ({ event, delta: [dx, dy] }) => {
-        if (event.ctrlKey) {
-          event.preventDefault();
-          const zoomFactor = dy < 0 ? 1.04 : 0.96;
-          const rect = containerRef.current?.getBoundingClientRect();
-          const mouseX = rect ? event.clientX - rect.left : undefined;
-          const mouseY = rect ? event.clientY - rect.top : undefined;
-          zoomViewport(zoomFactor, mouseX, mouseY);
-        } else {
-          // Pan on normal swipe
-          event.preventDefault();
-          panViewport(-dx, -dy);
-        }
-      },
     },
     {
       drag: { filterTaps: true },
-      wheel: { eventOptions: { passive: false } },
       pinch: { eventOptions: { passive: false } },
     }
   );
 
-  // Mouse Interactions for drawing custom Action Container Frames
+  // Mouse Interactions for drawing custom Action Container Frames or selection marquees
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    // Only draw frames if F tool is selected and not clicking on existing nodes
-    if (activeTool !== "frame") return;
     const target = e.target as HTMLElement;
     if (target.closest("[data-node-id]") || e.button !== 0) return;
 
@@ -178,17 +201,28 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
 
     containerRef.current!.setPointerCapture(e.pointerId);
 
-    setFrameDrawing({
-      startX: canvasX,
-      startY: canvasY,
-      currentX: canvasX,
-      currentY: canvasY,
-    });
+    if (activeTool === "frame") {
+      setFrameDrawing({
+        startX: canvasX,
+        startY: canvasY,
+        currentX: canvasX,
+        currentY: canvasY,
+      });
+    } else if (activeTool === "select") {
+      // Clear selections unless holding shift
+      if (!e.shiftKey) {
+        setSelectedNodeIds([]);
+      }
+      setSelectionBox({
+        startX: canvasX,
+        startY: canvasY,
+        currentX: canvasX,
+        currentY: canvasY,
+      });
+    }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!frameDrawing) return;
-
     const rect = containerRef.current!.getBoundingClientRect();
     const clientX = e.clientX - rect.left;
     const clientY = e.clientY - rect.top;
@@ -196,32 +230,53 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
     const canvasX = (clientX - viewport.x) / viewport.zoom;
     const canvasY = (clientY - viewport.y) / viewport.zoom;
 
-    setFrameDrawing((prev) =>
-      prev ? { ...prev, currentX: canvasX, currentY: canvasY } : null
-    );
+    if (frameDrawing) {
+      setFrameDrawing((prev) =>
+        prev ? { ...prev, currentX: canvasX, currentY: canvasY } : null
+      );
+    } else if (selectionBox) {
+      setSelectionBox((prev) =>
+        prev ? { ...prev, currentX: canvasX, currentY: canvasY } : null
+      );
+
+      // Perform real-time marquee overlapping selection checks
+      const left = Math.min(selectionBox.startX, canvasX);
+      const top = Math.min(selectionBox.startY, canvasY);
+      const right = Math.max(selectionBox.startX, canvasX);
+      const bottom = Math.max(selectionBox.startY, canvasY);
+
+      const overlapped = nodes
+        .filter((n) => n.x < right && n.x + n.width > left && n.y < bottom && n.y + n.height > top)
+        .map((n) => n.id);
+
+      setSelectedNodeIds(overlapped);
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!frameDrawing) return;
     containerRef.current!.releasePointerCapture(e.pointerId);
 
-    const left = Math.min(frameDrawing.startX, frameDrawing.currentX);
-    const top = Math.min(frameDrawing.startY, frameDrawing.currentY);
-    const width = Math.abs(frameDrawing.currentX - frameDrawing.startX);
-    const height = Math.abs(frameDrawing.currentY - frameDrawing.startY);
+    if (frameDrawing) {
+      const left = Math.min(frameDrawing.startX, frameDrawing.currentX);
+      const top = Math.min(frameDrawing.startY, frameDrawing.currentY);
+      const width = Math.abs(frameDrawing.currentX - frameDrawing.startX);
+      const height = Math.abs(frameDrawing.currentY - frameDrawing.startY);
 
-    if (width > 25 && height > 25) {
-      // Create new custom sized action container
-      const nodeType = "actionContainerNode";
-      const nodeId = addNode(nodeType, left, top);
-      updateNodeDimensions(nodeId, width, height);
-    } else {
-      // Single click drops default frame
-      addNode("actionContainerNode", frameDrawing.startX - 170, frameDrawing.startY - 120);
+      if (width > 25 && height > 25) {
+        const nodeType = "actionContainerNode";
+        const nodeId = addNode(nodeType, left, top);
+        updateNodeDimensions(nodeId, width, height);
+      } else {
+        // Single click drops default frame
+        addNode("actionContainerNode", frameDrawing.startX - 170, frameDrawing.startY - 120);
+      }
+      setFrameDrawing(null);
+      setActiveTool("select");
     }
 
-    setFrameDrawing(null);
-    setActiveTool("select"); // Return to pointer tool
+    if (selectionBox) {
+      setSelectionBox(null);
+    }
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -322,17 +377,6 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
 
         <div className="h-4 w-px bg-slate-800" />
 
-        {/* Action Trigger */}
-        <button
-          onClick={runPipeline}
-          className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold px-3 py-1 rounded-lg text-[10px] tracking-wider transition-all duration-200 shadow-md hover:shadow-[0_0_10px_rgba(16,185,129,0.3)] cursor-pointer"
-        >
-          <Play size={11} fill="currentColor" className="shrink-0" />
-          RUN PIPELINE
-        </button>
-
-        <div className="h-4 w-px bg-slate-800" />
-
         {/* View Controls */}
         <div className="flex items-center gap-1">
           <button
@@ -360,21 +404,6 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
             <Maximize size={14} />
           </button>
         </div>
-
-        <div className="h-4 w-px bg-slate-800" />
-
-        {/* Minimap Toggle */}
-        <button
-          onClick={() => setShowMinimap(!showMinimap)}
-          className={`flex items-center gap-1 px-2.5 py-1 border rounded-lg text-[10px] font-medium transition-all duration-200 cursor-pointer ${
-            showMinimap
-              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-              : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
-          }`}
-        >
-          <Map size={11} />
-          Minimap
-        </button>
       </div>
 
       {/* Main Gesture Interactive Container */}
@@ -435,6 +464,28 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
                   pointerEvents: "none",
                 }}
                 className="border-2 border-dashed border-emerald-500 bg-emerald-500/5 rounded-lg z-50"
+              />
+            );
+          })()}
+
+          {/* Marquee Selection Box drawing */}
+          {selectionBox && (() => {
+            const left = Math.min(selectionBox.startX, selectionBox.currentX);
+            const top = Math.min(selectionBox.startY, selectionBox.currentY);
+            const w = Math.abs(selectionBox.currentX - selectionBox.startX);
+            const h = Math.abs(selectionBox.currentY - selectionBox.startY);
+
+            return (
+              <div
+                style={{
+                  position: "absolute",
+                  left,
+                  top,
+                  width: w,
+                  height: h,
+                  pointerEvents: "none",
+                }}
+                className="border border-emerald-500/55 bg-emerald-500/5 rounded z-50"
               />
             );
           })()}
