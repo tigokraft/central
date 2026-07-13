@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState, ChangeEvent } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { Brain } from "lucide-react";
 
@@ -16,7 +16,7 @@ interface MemoryGraphNoteProps {
 export default function MemoryGraphNote({ data }: MemoryGraphNoteProps) {
   const [noteText, setNoteText] = useState(data.note || "");
 
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleTextChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setNoteText(val);
     if (data.onChangeNote) {
