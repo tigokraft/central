@@ -7,7 +7,6 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize,
-  Map,
   Terminal,
   Box,
   MessageSquare,
@@ -26,10 +25,9 @@ import MemoryGraphNote from "./nodes/MemoryGraphNote";
 
 interface InfiniteCanvasProps {
   showMinimap: boolean;
-  setShowMinimap: (show: boolean) => void;
 }
 
-export default function InfiniteCanvas({ showMinimap, setShowMinimap }: InfiniteCanvasProps) {
+export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const nodes = useCanvasStore((state) => state.nodes);
   const viewport = useCanvasStore((state) => state.viewport);
   const activeTool = useCanvasStore((state) => state.activeTool);

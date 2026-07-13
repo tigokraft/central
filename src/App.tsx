@@ -35,7 +35,6 @@ export default function App() {
           <div className="flex-1 relative">
             <InfiniteCanvas
               showMinimap={showMinimap}
-              setShowMinimap={setShowMinimap}
             />
           </div>
         </div>
