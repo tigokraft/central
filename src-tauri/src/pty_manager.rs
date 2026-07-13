@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, State, Manager};
 pub struct PtyProcess {
     pub master: Box<dyn MasterPty + Send>,
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    pub child: Arc<Mutex<Box<dyn Child + Send>>>,
+    pub child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
 }
 
 #[derive(Default)]
@@ -85,7 +85,7 @@ pub fn spawn_pty(
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
     let writer_shared = Arc::new(Mutex::new(writer));
-    let child_boxed: Box<dyn Child + Send> = child;
+    let child_boxed: Box<dyn Child + Send + Sync> = child;
     let child_shared = Arc::new(Mutex::new(child_boxed));
 
     // Store PTY process information
