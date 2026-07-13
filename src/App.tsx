@@ -126,6 +126,15 @@ function FlowWrapper({ setActiveProcesses, registerOnLoadPreset }: FlowWrapperPr
     return () => window.removeEventListener("click", handleClose);
   }, []);
 
+  // Disable default browser context menu globally
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("contextmenu", handleContextMenu);
+    return () => window.removeEventListener("contextmenu", handleContextMenu);
+  }, []);
+
   const handleAddNode = useCallback(
     (type: "terminalNode" | "actionContainerNode" | "promptNode" | "memoryGraphNote") => {
       if (!contextMenu) return;
