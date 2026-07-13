@@ -19,7 +19,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
   const isSelected = selectedNodeIds.includes(node.id);
 
   const bindDrag = useDrag(
-    ({ delta: [dx, dy], first, last, event }) => {
+    ({ delta: [dx, dy], first, last, event, tap }) => {
       // Only drag with select tool
       if (activeTool !== "select") return;
 
@@ -31,10 +31,29 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
 
       event.stopPropagation();
 
+      // Tap Selection (Click)
+      if (tap) {
+        const selected = useCanvasStore.getState().selectedNodeIds;
+        const isNodeSelected = selected.includes(node.id);
+        const isShift = (event as MouseEvent).shiftKey;
+
+        if (isShift) {
+          if (isNodeSelected) {
+            setSelectedNodeIds(selected.filter((id) => id !== node.id));
+          } else {
+            setSelectedNodeIds([...selected, node.id]);
+          }
+        } else {
+          setSelectedNodeIds([node.id]);
+        }
+        return;
+      }
+
+      // Drag Selection initialization
       if (first) {
         const selected = useCanvasStore.getState().selectedNodeIds;
         if (!selected.includes(node.id)) {
-          if (event.shiftKey) {
+          if ((event as MouseEvent).shiftKey) {
             setSelectedNodeIds([...selected, node.id]);
           } else {
             setSelectedNodeIds([node.id]);
@@ -54,38 +73,14 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
       }
     },
     {
+      filterTaps: true,
       pointer: { capture: false },
     }
   );
 
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement;
-    if (target.closest("input, textarea, button, select, .xterm-screen, [data-nodrag], .resize-handle")) {
-      return;
-    }
-
-    e.stopPropagation();
-
-    const selected = useCanvasStore.getState().selectedNodeIds;
-    const isNodeSelected = selected.includes(node.id);
-
-    if (e.shiftKey) {
-      if (isNodeSelected) {
-        setSelectedNodeIds(selected.filter((id) => id !== node.id));
-      } else {
-        setSelectedNodeIds([...selected, node.id]);
-      }
-    } else {
-      if (!isNodeSelected) {
-        setSelectedNodeIds([node.id]);
-      }
-    }
-  };
-
   return (
     <div
       ref={wrapperRef}
-      onPointerDown={handlePointerDown}
       style={{
         position: "absolute",
         left: node.x,
