@@ -25,19 +25,28 @@ export default function Port({ nodeId, handleId, type, color = "emerald", classN
     const { viewport } = store;
     
     // Compute port coordinate in canvas space
+    const container = document.getElementById("canvas-container");
+    const containerRect = container?.getBoundingClientRect() || { left: 0, top: 0 };
+    
+    // Convert physical screen coordinate to container-local coordinate
+    const clientX = x - containerRect.left;
+    const clientY = y - containerRect.top;
+
     const rect = portRef.current?.getBoundingClientRect();
     let startX = 0;
     let startY = 0;
     if (rect) {
-      startX = (rect.left + rect.width / 2 - viewport.x) / viewport.zoom;
-      startY = (rect.top + rect.height / 2 - viewport.y) / viewport.zoom;
+      const portClientX = rect.left + rect.width / 2 - containerRect.left;
+      const portClientY = rect.top + rect.height / 2 - containerRect.top;
+      startX = (portClientX - viewport.x) / viewport.zoom;
+      startY = (portClientY - viewport.y) / viewport.zoom;
     } else {
-      startX = (x - viewport.x) / viewport.zoom;
-      startY = (y - viewport.y) / viewport.zoom;
+      startX = (clientX - viewport.x) / viewport.zoom;
+      startY = (clientY - viewport.y) / viewport.zoom;
     }
 
-    const currentX = (x - viewport.x) / viewport.zoom;
-    const currentY = (y - viewport.y) / viewport.zoom;
+    const currentX = (clientX - viewport.x) / viewport.zoom;
+    const currentY = (clientY - viewport.y) / viewport.zoom;
 
     if (active) {
       if (!store.draggingEdge) {

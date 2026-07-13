@@ -112,6 +112,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
   return (
     <div
       ref={wrapperRef}
+      data-node-id={node.id}
       style={{
         position: "absolute",
         left: node.x,
@@ -130,17 +131,6 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
       {/* Node Content Container */}
       <div className="relative w-full h-full">
         {children}
-        
-        {/* Node Delete Button (visible on hover) */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            deleteNode(node.id);
-          }}
-          className="absolute -top-2 -right-2 bg-red-600 hover:bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-bold shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
-        >
-          ×
-        </button>
       </div>
     </div>
   );

@@ -44,12 +44,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const spacePressed = useRef(false);
   const [isSpaceActive, setIsSpaceActive] = useState(false);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    canvasX: number;
-    canvasY: number;
-  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; canvasX: number; canvasY: number; type: "canvas" | "node"; nodeId?: string } | null>(null);
 
   // Frame creation state
   const [frameDrawing, setFrameDrawing] = useState<{
@@ -292,19 +287,27 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    const rect = containerRef.current!.getBoundingClientRect();
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
     const clientX = e.clientX - rect.left;
     const clientY = e.clientY - rect.top;
-
     const canvasX = (clientX - viewport.x) / viewport.zoom;
     const canvasY = (clientY - viewport.y) / viewport.zoom;
 
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      canvasX,
-      canvasY,
-    });
+    const target = e.target as HTMLElement;
+    const nodeEl = target.closest("[data-node-id]");
+
+    if (nodeEl) {
+      const nodeId = nodeEl.getAttribute("data-node-id")!;
+      if (!selectedNodeIds.includes(nodeId)) {
+        setSelectedNodeIds([nodeId]);
+      }
+      setContextMenu({ x: e.clientX, y: e.clientY, canvasX, canvasY, type: "node", nodeId });
+    } else {
+      setContextMenu({ x: e.clientX, y: e.clientY, canvasX, canvasY, type: "canvas" });
+    }
   };
 
   const handleAddNodeFromMenu = (type: CanvasNode["type"]) => {
@@ -419,6 +422,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
 
       {/* Main Gesture Interactive Container */}
       <div
+        id="canvas-container"
         ref={containerRef}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -509,34 +513,75 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            onClick={() => handleAddNodeFromMenu("terminalNode")}
-            className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            <Terminal size={12} className="text-emerald-500" />
-            Add Terminal Node
-          </button>
-          <button
-            onClick={() => handleAddNodeFromMenu("actionContainerNode")}
-            className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            <Box size={12} className="text-blue-500" />
-            Add Action Container
-          </button>
-          <button
-            onClick={() => handleAddNodeFromMenu("promptNode")}
-            className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            <MessageSquare size={12} className="text-purple-500" />
-            Add Prompt Node
-          </button>
-          <button
-            onClick={() => handleAddNodeFromMenu("memoryGraphNote")}
-            className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            <Brain size={12} className="text-pink-500" />
-            Add Memory Graph Note
-          </button>
+          {contextMenu.type === "canvas" ? (
+            <>
+              <button
+                onClick={() => handleAddNodeFromMenu("terminalNode")}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                <Terminal size={12} className="text-emerald-500" />
+                Add Terminal Node
+              </button>
+              <button
+                onClick={() => handleAddNodeFromMenu("actionContainerNode")}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                <Box size={12} className="text-blue-500" />
+                Add Action Container
+              </button>
+              <button
+                onClick={() => handleAddNodeFromMenu("promptNode")}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                <MessageSquare size={12} className="text-purple-500" />
+                Add Prompt Node
+              </button>
+              <button
+                onClick={() => handleAddNodeFromMenu("memoryGraphNote")}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                <Brain size={12} className="text-pink-500" />
+                Add Memory Graph Note
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                Run Process
+              </button>
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                Change Color
+              </button>
+              <div className="h-px w-full bg-slate-800 my-1" />
+              <button
+                onClick={() => {
+                  deleteNode(contextMenu.nodeId!);
+                  setContextMenu(null);
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-red-900/50 hover:text-red-400 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                Delete Node
+              </button>
+            </>
+          )}
         </div>
       )}
 
