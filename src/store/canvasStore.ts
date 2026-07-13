@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export interface CanvasNode {
   id: string;
-  type: "terminalNode" | "actionContainerNode" | "promptNode" | "memoryGraphNote";
+  type: "terminalNode" | "actionContainerNode" | "promptNode" | "memoryNode" | "memoryGraphNote";
   x: number;
   y: number;
   width: number;
@@ -221,9 +221,9 @@ export const useCanvasStore = create<CanvasState>((set) => ({
         label = "Prompt Input";
         data = { label, prompt: "Enter instructions here..." };
         break;
-      case "memoryGraphNote":
-        label = "Memory Graph Note";
-        data = { label, note: "Key recollections and records..." };
+      case "memoryNode":
+        label = "Neural Memory";
+        data = { label, facts: ["App uses Tauri", "Memory Node added"] };
         break;
     }
 
