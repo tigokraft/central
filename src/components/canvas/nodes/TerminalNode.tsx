@@ -144,6 +144,9 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   } else if (data.status === "error" || ptyStatus === "error") {
     statusColor = "bg-red-500";
     statusText = "Error";
+  } else if (data.status === "success") {
+    statusColor = "bg-emerald-500";
+    statusText = "Success";
   }
 
   return (
