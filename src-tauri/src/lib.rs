@@ -1,5 +1,6 @@
 mod pty_manager;
 mod graph_runner;
+mod git_engine;
 pub mod memory;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -14,6 +15,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(pty_manager::PtyManager::default())
         .manage(graph_runner::GraphRunnerState::default())
+        .manage(git_engine::GitEngineState::default())
         .setup(|app| {
             #[cfg(target_os = "windows")]
             {
@@ -35,6 +37,9 @@ pub fn run() {
             memory::engine::supersede_record,
             memory::engine::export_to_obsidian,
             graph_runner::execute_graph,
+            git_engine::list_active_worktrees,
+            git_engine::rollback_worktree,
+            git_engine::get_repo_head,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
