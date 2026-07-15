@@ -60,6 +60,7 @@ export default function SVGEdgeLayer() {
   const edges = useCanvasStore((state) => state.edges);
   const draggingEdge = useCanvasStore((state) => state.draggingEdge);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
+  const edgeExecState = useCanvasStore((state) => state.edgeExecState);
 
   return (
     <svg className="absolute inset-0 pointer-events-none w-full h-full overflow-visible z-0">
@@ -93,6 +94,28 @@ export default function SVGEdgeLayer() {
         >
           <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#f472b6" />
         </marker>
+        <marker
+          id="arrow-cyan"
+          viewBox="0 0 10 10"
+          refX="6"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#22d3ee" />
+        </marker>
+        <marker
+          id="arrow-red"
+          viewBox="0 0 10 10"
+          refX="6"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#ef4444" />
+        </marker>
       </defs>
 
       {/* Render existing connections */}
@@ -117,8 +140,24 @@ export default function SVGEdgeLayer() {
         );
 
         const isPink = sourceNode.type === "memoryGraphNote" || targetNode.type === "memoryGraphNote";
-        const strokeColor = isPink ? "#f472b6" : "#34d399";
-        const markerUrl = isPink ? "url(#arrow-pink)" : "url(#arrow)";
+        let strokeColor = isPink ? "#f472b6" : "#34d399";
+        let markerUrl = isPink ? "url(#arrow-pink)" : "url(#arrow)";
+        let dashClass = "animate-dash";
+
+        const execState = edgeExecState[edge.id] ?? "idle";
+        if (execState === "streaming") {
+          strokeColor = "#22d3ee";
+          markerUrl = "url(#arrow-cyan)";
+          dashClass = "animate-dash-fast";
+        } else if (execState === "success") {
+          strokeColor = "#34d399";
+          markerUrl = "url(#arrow)";
+          dashClass = "";
+        } else if (execState === "fail") {
+          strokeColor = "#ef4444";
+          markerUrl = "url(#arrow-red)";
+          dashClass = "animate-dash-fast";
+        }
 
         return (
           <g key={edge.id} className="group">
@@ -149,7 +188,7 @@ export default function SVGEdgeLayer() {
               fill="none"
               stroke={strokeColor}
               strokeWidth={2}
-              className="animate-dash"
+              className={dashClass}
               filter="url(#glow)"
               markerEnd={markerUrl}
             />

@@ -22,3 +22,8 @@ body {
   stroke-dasharray: 6, 4;
   animation: dash 1s linear infinite;
 }
+
+.animate-dash-fast {
+  stroke-dasharray: 6, 4;
+  animation: dash 0.4s linear infinite;
+}
