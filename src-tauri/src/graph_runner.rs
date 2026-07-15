@@ -84,6 +84,58 @@ struct ExecutionContext {
     working_dir: PathBuf,
 }
 
+// Builds the petgraph DAG from the canvas nodes/edges and rejects cycles.
+// Pure and AppHandle-free so it can be exercised directly in unit tests.
+fn build_graph(
+    nodes: &[GraphNodeInput],
+    edges: &[GraphEdgeInput],
+) -> Result<(DiGraph<String, ()>, HashMap<String, NodeIndex>), String> {
+    let mut graph = DiGraph::<String, ()>::new();
+    let mut index_of = HashMap::new();
+    for n in nodes {
+        index_of.insert(n.id.clone(), graph.add_node(n.id.clone()));
+    }
+    for e in edges {
+        if let (Some(&s), Some(&t)) = (index_of.get(&e.source), index_of.get(&e.target)) {
+            graph.add_edge(s, t, ());
+        }
+    }
+
+    if toposort(&graph, None).is_err() {
+        return Err("Execution graph contains a cycle".to_string());
+    }
+
+    Ok((graph, index_of))
+}
+
+fn build_context(
+    nodes: Vec<GraphNodeInput>,
+    edges: Vec<GraphEdgeInput>,
+    app: AppHandle,
+) -> Result<Arc<ExecutionContext>, String> {
+    let (graph, index_of) = build_graph(&nodes, &edges)?;
+
+    let node_locks = nodes.iter().map(|n| (n.id.clone(), TokioMutex::new(()))).collect();
+    let node_of: HashMap<String, GraphNodeInput> =
+        nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+
+    let mut working_dir = std::env::current_dir().unwrap_or_default();
+    if working_dir.ends_with("src-tauri") {
+        working_dir.pop();
+    }
+
+    Ok(Arc::new(ExecutionContext {
+        app,
+        outputs: TokioMutex::new(HashMap::new()),
+        retry_counts: TokioMutex::new(HashMap::new()),
+        node_locks,
+        graph,
+        index_of,
+        node_of,
+        working_dir,
+    }))
+}
+
 #[tauri::command]
 pub fn execute_graph(
     nodes: Vec<GraphNodeInput>,
@@ -95,41 +147,13 @@ pub fn execute_graph(
         return Err("A pipeline is already running".to_string());
     }
 
-    let mut graph = DiGraph::<String, ()>::new();
-    let mut index_of = HashMap::new();
-    for n in &nodes {
-        index_of.insert(n.id.clone(), graph.add_node(n.id.clone()));
-    }
-    for e in &edges {
-        if let (Some(&s), Some(&t)) = (index_of.get(&e.source), index_of.get(&e.target)) {
-            graph.add_edge(s, t, ());
+    let ctx = match build_context(nodes, edges, app_handle.clone()) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            state.running.store(false, Ordering::SeqCst);
+            return Err(e);
         }
-    }
-
-    if toposort(&graph, None).is_err() {
-        state.running.store(false, Ordering::SeqCst);
-        return Err("Execution graph contains a cycle".to_string());
-    }
-
-    let node_locks = nodes.iter().map(|n| (n.id.clone(), TokioMutex::new(()))).collect();
-    let node_of: HashMap<String, GraphNodeInput> =
-        nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
-
-    let mut working_dir = std::env::current_dir().unwrap_or_default();
-    if working_dir.ends_with("src-tauri") {
-        working_dir.pop();
-    }
-
-    let ctx = Arc::new(ExecutionContext {
-        app: app_handle.clone(),
-        outputs: TokioMutex::new(HashMap::new()),
-        retry_counts: TokioMutex::new(HashMap::new()),
-        node_locks,
-        graph,
-        index_of,
-        node_of,
-        working_dir,
-    });
+    };
 
     let running_flag = state.running.clone();
     tauri::async_runtime::spawn(async move {
@@ -252,7 +276,9 @@ async fn execute_with_retries(ctx: &Arc<ExecutionContext>, node_id: &str) -> Res
                     let mut counts = ctx.retry_counts.lock().await;
                     let used = counts.entry(node_id.to_string()).or_insert(0);
                     if *used < max_retries {
-                        if let Some(coder_id) = find_nearest_coder_ancestor(ctx, node_id) {
+                        if let Some(coder_id) =
+                            find_nearest_coder_ancestor(&ctx.graph, &ctx.index_of, &ctx.node_of, node_id)
+                        {
                             *used += 1;
                             let retry_count = *used;
                             drop(counts);
@@ -517,21 +543,26 @@ async fn gather_input_context(ctx: &Arc<ExecutionContext>, node_id: &str) -> Str
         .join("\n\n")
 }
 
-fn find_nearest_coder_ancestor(ctx: &Arc<ExecutionContext>, node_id: &str) -> Option<String> {
-    let start_idx = *ctx.index_of.get(node_id)?;
+// Pure BFS over the DAG so retry-ancestor routing can be unit tested without an AppHandle.
+fn find_nearest_coder_ancestor(
+    graph: &DiGraph<String, ()>,
+    index_of: &HashMap<String, NodeIndex>,
+    node_of: &HashMap<String, GraphNodeInput>,
+    node_id: &str,
+) -> Option<String> {
+    let start_idx = *index_of.get(node_id)?;
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
     visited.insert(start_idx);
     queue.push_back(start_idx);
 
     while let Some(idx) = queue.pop_front() {
-        for pred_idx in ctx.graph.neighbors_directed(idx, Direction::Incoming) {
+        for pred_idx in graph.neighbors_directed(idx, Direction::Incoming) {
             if !visited.insert(pred_idx) {
                 continue;
             }
-            let pred_id = &ctx.graph[pred_idx];
-            if ctx
-                .node_of
+            let pred_id = &graph[pred_idx];
+            if node_of
                 .get(pred_id)
                 .is_some_and(|n| n.node_type == CODER_NODE_TYPE)
             {
@@ -541,4 +572,94 @@ fn find_nearest_coder_ancestor(ctx: &Arc<ExecutionContext>, node_id: &str) -> Op
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(id: &str, node_type: &str) -> GraphNodeInput {
+        GraphNodeInput {
+            id: id.to_string(),
+            node_type: node_type.to_string(),
+            data: NodeData::default(),
+        }
+    }
+
+    fn edge(source: &str, target: &str) -> GraphEdgeInput {
+        GraphEdgeInput { source: source.to_string(), target: target.to_string() }
+    }
+
+    #[test]
+    fn build_graph_accepts_valid_dag() {
+        let nodes = vec![node("prompt-1", "promptNode"), node("action-1", "actionContainerNode"), node("terminal-1", "terminalNode")];
+        let edges = vec![edge("prompt-1", "action-1"), edge("action-1", "terminal-1")];
+        let (graph, index_of) = build_graph(&nodes, &edges).expect("valid DAG should build");
+        assert_eq!(graph.node_count(), 3);
+        assert_eq!(index_of.len(), 3);
+    }
+
+    #[test]
+    fn build_graph_rejects_cycle() {
+        let nodes = vec![node("a", "promptNode"), node("b", "actionContainerNode")];
+        let edges = vec![edge("a", "b"), edge("b", "a")];
+        let result = build_graph(&nodes, &edges);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn finds_direct_coder_ancestor() {
+        let nodes = vec![node("prompt-1", "promptNode"), node("action-1", "actionContainerNode")];
+        let edges = vec![edge("prompt-1", "action-1")];
+        let (graph, index_of) = build_graph(&nodes, &edges).unwrap();
+        let node_of: HashMap<String, GraphNodeInput> = nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+
+        let ancestor = find_nearest_coder_ancestor(&graph, &index_of, &node_of, "action-1");
+        assert_eq!(ancestor, Some("prompt-1".to_string()));
+    }
+
+    #[test]
+    fn finds_coder_ancestor_across_multiple_hops() {
+        // prompt-1 -> memory-1 -> action-1 -> terminal-1
+        let nodes = vec![
+            node("prompt-1", "promptNode"),
+            node("memory-1", "memoryNode"),
+            node("action-1", "actionContainerNode"),
+            node("terminal-1", "terminalNode"),
+        ];
+        let edges = vec![edge("prompt-1", "memory-1"), edge("memory-1", "action-1"), edge("action-1", "terminal-1")];
+        let (graph, index_of) = build_graph(&nodes, &edges).unwrap();
+        let node_of: HashMap<String, GraphNodeInput> = nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+
+        let ancestor = find_nearest_coder_ancestor(&graph, &index_of, &node_of, "terminal-1");
+        assert_eq!(ancestor, Some("prompt-1".to_string()));
+    }
+
+    #[test]
+    fn returns_none_when_no_coder_ancestor_exists() {
+        let nodes = vec![node("action-1", "actionContainerNode"), node("terminal-1", "terminalNode")];
+        let edges = vec![edge("action-1", "terminal-1")];
+        let (graph, index_of) = build_graph(&nodes, &edges).unwrap();
+        let node_of: HashMap<String, GraphNodeInput> = nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+
+        let ancestor = find_nearest_coder_ancestor(&graph, &index_of, &node_of, "terminal-1");
+        assert_eq!(ancestor, None);
+    }
+
+    #[test]
+    fn prefers_nearest_coder_when_two_ancestors_exist() {
+        // outer-coder -> bridge -> check (2 hops), inner-coder -> check (1 hop, direct)
+        let nodes = vec![
+            node("outer-coder", "promptNode"),
+            node("bridge", "memoryNode"),
+            node("inner-coder", "promptNode"),
+            node("check", "terminalNode"),
+        ];
+        let edges = vec![edge("outer-coder", "bridge"), edge("bridge", "check"), edge("inner-coder", "check")];
+        let (graph, index_of) = build_graph(&nodes, &edges).unwrap();
+        let node_of: HashMap<String, GraphNodeInput> = nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+
+        let ancestor = find_nearest_coder_ancestor(&graph, &index_of, &node_of, "check");
+        assert_eq!(ancestor, Some("inner-coder".to_string()));
+    }
 }
