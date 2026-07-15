@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface CanvasNode {
   id: string;
@@ -18,9 +19,11 @@ export interface CanvasNode {
     entities?: string[];
     command?: string;
     isRunning?: boolean;
-    status?: "idle" | "running" | "error";
+    status?: "idle" | "running" | "success" | "error";
   };
 }
+
+export type EdgeExecState = "idle" | "streaming" | "success" | "fail";
 
 export interface CanvasEdge {
   id: string;
@@ -90,14 +93,22 @@ interface CanvasState {
 
   // Presets & Execution
   loadPreset: (presetName: string) => void;
-  runPipeline: () => void;
+  runPipeline: () => Promise<void>;
+
+  // Execution state (driven by graph_runner events)
+  edgeExecState: Record<string, EdgeExecState>;
+  isPipelineRunning: boolean;
+  setNodeStatus: (id: string, status: CanvasNode["data"]["status"]) => void;
+  setEdgeExecStateForTarget: (targetNodeId: string, execState: EdgeExecState) => void;
+  resetExecutionState: () => void;
+  setPipelineRunning: (running: boolean) => void;
 
   // Selection
   selectedNodeIds: string[];
   setSelectedNodeIds: (ids: string[]) => void;
 }
 
-export const useCanvasStore = create<CanvasState>((set) => ({
+export const useCanvasStore = create<CanvasState>((set, get) => ({
   selectedNodeIds: [],
   setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids }),
 
@@ -161,6 +172,8 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   ],
   activeTool: "select",
   draggingEdge: null,
+  edgeExecState: {},
+  isPipelineRunning: false,
 
   setViewport: (vp) =>
     set((state) => ({ viewport: { ...state.viewport, ...vp } })),
@@ -498,30 +511,45 @@ export const useCanvasStore = create<CanvasState>((set) => ({
     }
   },
 
-  runPipeline: () => {
-    // Run execution logic on all terminal nodes
+  runPipeline: async () => {
+    if (get().isPipelineRunning) return;
+
+    get().resetExecutionState();
+    set({ isPipelineRunning: true });
+
+    const { nodes, edges } = get();
+    try {
+      await invoke("execute_graph", {
+        nodes: nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
+        edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+      });
+    } catch (err) {
+      console.error("Failed to start pipeline execution:", err);
+      set({ isPipelineRunning: false });
+    }
+  },
+
+  setNodeStatus: (id, status) =>
     set((state) => ({
       nodes: state.nodes.map((n) =>
-        n.type === "terminalNode"
-          ? {
-              ...n,
-              data: { ...n.data, isRunning: true, status: "running" as const },
-            }
-          : n
+        n.id === id ? { ...n, data: { ...n.data, status } } : n
       ),
-    }));
+    })),
 
-    setTimeout(() => {
-      set((state) => ({
-        nodes: state.nodes.map((n) =>
-          n.type === "terminalNode"
-            ? {
-                ...n,
-                data: { ...n.data, isRunning: false, status: "idle" as const },
-              }
-            : n
-        ),
-      }));
-    }, 4000);
-  },
+  setEdgeExecStateForTarget: (targetNodeId, execState) =>
+    set((state) => {
+      const next = { ...state.edgeExecState };
+      state.edges.forEach((e) => {
+        if (e.target === targetNodeId) next[e.id] = execState;
+      });
+      return { edgeExecState: next };
+    }),
+
+  resetExecutionState: () =>
+    set((state) => ({
+      edgeExecState: {},
+      nodes: state.nodes.map((n) => ({ ...n, data: { ...n.data, status: "idle" as const } })),
+    })),
+
+  setPipelineRunning: (running) => set({ isPipelineRunning: running }),
 }));

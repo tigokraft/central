@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   MousePointer,
   Hand,
@@ -24,6 +25,15 @@ import MemoryNode from "./nodes/MemoryNode";
 
 interface InfiniteCanvasProps {
   showMinimap: boolean;
+}
+
+interface NodeEventPayload {
+  nodeId: string;
+  message?: string;
+  output?: string;
+  exitCode?: number;
+  retryCount?: number;
+  maxRetries?: number;
 }
 
 export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
@@ -157,6 +167,54 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     const closeMenu = () => setContextMenu(null);
     window.addEventListener("click", closeMenu);
     return () => window.removeEventListener("click", closeMenu);
+  }, []);
+
+  // Graph execution event wiring: syncs node/edge visuals to the Rust execute_graph run
+  useEffect(() => {
+    const unlistenFns: Array<() => void> = [];
+
+    const setup = async () => {
+      const { setNodeStatus, setEdgeExecStateForTarget, setPipelineRunning } = useCanvasStore.getState();
+
+      unlistenFns.push(
+        await listen<NodeEventPayload>("node-start", (e) => {
+          setNodeStatus(e.payload.nodeId, "running");
+          setEdgeExecStateForTarget(e.payload.nodeId, "streaming");
+        })
+      );
+      unlistenFns.push(
+        await listen<NodeEventPayload>("node-streaming", (e) => {
+          setNodeStatus(e.payload.nodeId, "running");
+          setEdgeExecStateForTarget(e.payload.nodeId, "streaming");
+        })
+      );
+      unlistenFns.push(
+        await listen<NodeEventPayload>("node-success", (e) => {
+          setNodeStatus(e.payload.nodeId, "success");
+          setEdgeExecStateForTarget(e.payload.nodeId, "success");
+        })
+      );
+      unlistenFns.push(
+        await listen<NodeEventPayload>("node-retry", (e) => {
+          setNodeStatus(e.payload.nodeId, "error");
+          setEdgeExecStateForTarget(e.payload.nodeId, "fail");
+        })
+      );
+      unlistenFns.push(
+        await listen<NodeEventPayload>("node-fail", (e) => {
+          setNodeStatus(e.payload.nodeId, "error");
+          setEdgeExecStateForTarget(e.payload.nodeId, "fail");
+        })
+      );
+      unlistenFns.push(await listen("graph-complete", () => setPipelineRunning(false)));
+      unlistenFns.push(await listen("graph-error", () => setPipelineRunning(false)));
+    };
+
+    setup();
+
+    return () => {
+      unlistenFns.forEach((fn) => fn());
+    };
   }, []);
 
 
