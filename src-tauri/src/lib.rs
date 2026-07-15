@@ -1,4 +1,5 @@
 mod pty_manager;
+mod graph_runner;
 pub mod memory;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -12,6 +13,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(pty_manager::PtyManager::default())
+        .manage(graph_runner::GraphRunnerState::default())
         .setup(|app| {
             #[cfg(target_os = "windows")]
             {
@@ -32,6 +34,7 @@ pub fn run() {
             memory::engine::query_memory_graph,
             memory::engine::supersede_record,
             memory::engine::export_to_obsidian,
+            graph_runner::execute_graph,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
