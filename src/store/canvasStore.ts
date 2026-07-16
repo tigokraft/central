@@ -25,6 +25,13 @@ export interface CanvasNode {
 
 export type EdgeExecState = "idle" | "streaming" | "success" | "fail";
 
+export interface CableDiffStat {
+  insertions: number;
+  deletions: number;
+  filesChanged: number;
+  commitSha: string;
+}
+
 export interface CanvasEdge {
   id: string;
   source: string;
@@ -97,9 +104,11 @@ interface CanvasState {
 
   // Execution state (driven by graph_runner events)
   edgeExecState: Record<string, EdgeExecState>;
+  cableDiffStats: Record<string, CableDiffStat>;
   isPipelineRunning: boolean;
   setNodeStatus: (id: string, status: CanvasNode["data"]["status"]) => void;
   setEdgeExecStateForTarget: (targetNodeId: string, execState: EdgeExecState) => void;
+  setCableDiffStat: (sourceNodeId: string, targetNodeId: string, stat: CableDiffStat) => void;
   resetExecutionState: () => void;
   setPipelineRunning: (running: boolean) => void;
 
@@ -178,6 +187,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   activeTool: "select",
   draggingEdge: null,
   edgeExecState: {},
+  cableDiffStats: {},
   isPipelineRunning: false,
 
   setViewport: (vp) =>
@@ -550,9 +560,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return { edgeExecState: next };
     }),
 
+  setCableDiffStat: (sourceNodeId, targetNodeId, stat) =>
+    set((state) => {
+      const next = { ...state.cableDiffStats };
+      state.edges.forEach((e) => {
+        if (e.source === sourceNodeId && e.target === targetNodeId) next[e.id] = stat;
+      });
+      return { cableDiffStats: next };
+    }),
+
   resetExecutionState: () =>
     set((state) => ({
       edgeExecState: {},
+      cableDiffStats: {},
       nodes: state.nodes.map((n) => ({ ...n, data: { ...n.data, status: "idle" as const } })),
     })),
 
