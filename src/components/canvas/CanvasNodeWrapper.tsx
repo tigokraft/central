@@ -17,7 +17,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isSelected = selectedNodeIds.includes(node.id);
-  const isContainer = node.type === "actionContainerNode";
+  const isContainer = node.type === "actionContainerNode" || node.type === "actionFrameNode";
 
   // Automatically measure actual laid-out dimensions and sync to store
   useEffect(() => {
