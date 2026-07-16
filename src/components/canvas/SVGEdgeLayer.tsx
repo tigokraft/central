@@ -1,6 +1,6 @@
 import { useCanvasStore, getHandlePosition } from "../../store/canvasStore";
 
-function getBezierPath(
+function getControlPoints(
   x1: number,
   y1: number,
   handle1Id: string,
@@ -47,12 +47,44 @@ function getBezierPath(
   const dist = Math.hypot(x2 - x1, y2 - y1);
   const strength = Math.min(dist * 0.4, 100);
 
-  const cp1x = x1 + (dx1 !== 0 ? Math.sign(dx1) * strength : 0);
-  const cp1y = y1 + (dy1 !== 0 ? Math.sign(dy1) * strength : 0);
-  const cp2x = x2 + (dx2 !== 0 ? Math.sign(dx2) * strength : 0);
-  const cp2y = y2 + (dy2 !== 0 ? Math.sign(dy2) * strength : 0);
+  return {
+    cp1x: x1 + (dx1 !== 0 ? Math.sign(dx1) * strength : 0),
+    cp1y: y1 + (dy1 !== 0 ? Math.sign(dy1) * strength : 0),
+    cp2x: x2 + (dx2 !== 0 ? Math.sign(dx2) * strength : 0),
+    cp2y: y2 + (dy2 !== 0 ? Math.sign(dy2) * strength : 0),
+  };
+}
 
+function getBezierPath(
+  x1: number,
+  y1: number,
+  handle1Id: string,
+  node1Type: string,
+  x2: number,
+  y2: number,
+  handle2Id: string,
+  node2Type: string
+) {
+  const { cp1x, cp1y, cp2x, cp2y } = getControlPoints(x1, y1, handle1Id, node1Type, x2, y2, handle2Id, node2Type);
   return `M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`;
+}
+
+// Point at t=0.5 along the cable's cubic bezier, used to anchor the floating diff badge.
+function getBezierMidpoint(
+  x1: number,
+  y1: number,
+  handle1Id: string,
+  node1Type: string,
+  x2: number,
+  y2: number,
+  handle2Id: string,
+  node2Type: string
+) {
+  const { cp1x, cp1y, cp2x, cp2y } = getControlPoints(x1, y1, handle1Id, node1Type, x2, y2, handle2Id, node2Type);
+  return {
+    x: 0.125 * x1 + 0.375 * cp1x + 0.375 * cp2x + 0.125 * x2,
+    y: 0.125 * y1 + 0.375 * cp1y + 0.375 * cp2y + 0.125 * y2,
+  };
 }
 
 export default function SVGEdgeLayer() {
@@ -61,6 +93,7 @@ export default function SVGEdgeLayer() {
   const draggingEdge = useCanvasStore((state) => state.draggingEdge);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
   const edgeExecState = useCanvasStore((state) => state.edgeExecState);
+  const cableDiffStats = useCanvasStore((state) => state.cableDiffStats);
 
   return (
     <svg className="absolute inset-0 pointer-events-none w-full h-full overflow-visible z-0">
@@ -159,6 +192,11 @@ export default function SVGEdgeLayer() {
           dashClass = "animate-dash-fast";
         }
 
+        const diffStat = cableDiffStats[edge.id];
+        const mid = diffStat
+          ? getBezierMidpoint(start.x, start.y, edge.sourceHandle, sourceNode.type, end.x, end.y, edge.targetHandle, targetNode.type)
+          : null;
+
         return (
           <g key={edge.id} className="group">
             {/* Interactive Wide Path for selection and double-click delete */}
@@ -192,6 +230,25 @@ export default function SVGEdgeLayer() {
               filter="url(#glow)"
               markerEnd={markerUrl}
             />
+            {/* Floating Git Diff Badge: agent hand-off stats between Coder and Reviewer nodes */}
+            {diffStat && mid && (
+              <foreignObject
+                x={mid.x - 45}
+                y={mid.y - 11}
+                width={90}
+                height={22}
+                className="pointer-events-none overflow-visible"
+              >
+                <div
+                  title={`Hand-off commit ${diffStat.commitSha.slice(0, 7)}`}
+                  className="flex items-center justify-center gap-1 w-fit mx-auto bg-slate-950/95 border border-slate-700 rounded-full px-2 py-0.5 text-[9px] font-mono shadow-lg whitespace-nowrap"
+                >
+                  <span className="text-emerald-400">+{diffStat.insertions}</span>
+                  <span className="text-slate-600">/</span>
+                  <span className="text-red-400">-{diffStat.deletions}</span>
+                </div>
+              </foreignObject>
+            )}
           </g>
         );
       })}
