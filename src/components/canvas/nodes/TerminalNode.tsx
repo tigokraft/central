@@ -164,6 +164,14 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         type="source"
         className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2"
       />
+      {/* Dedicated socket for MemoryNode context cables */}
+      <Port
+        nodeId={id}
+        handleId="context"
+        type="target"
+        color="purple"
+        className="absolute -left-1.5 top-1/2 -translate-y-1/2"
+      />
 
       {/* Terminal Title Bar */}
       <div className="bg-slate-950 px-3 py-2 flex items-center justify-between border-b border-slate-800 shrink-0">
