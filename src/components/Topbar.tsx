@@ -1,5 +1,7 @@
-import { Play, ZoomIn, ZoomOut, Maximize, Map, Layers } from "lucide-react";
+import { useState } from "react";
+import { Play, ZoomIn, ZoomOut, Maximize, Map, Layers, KeyRound } from "lucide-react";
 import { useCanvasStore } from "../store/canvasStore";
+import ProviderSettingsModal from "./ProviderSettingsModal";
 
 interface TopbarProps {
   showMinimap: boolean;
@@ -10,6 +12,7 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
   const zoomViewport = useCanvasStore((state) => state.zoomViewport);
   const setViewport = useCanvasStore((state) => state.setViewport);
   const runPipeline = useCanvasStore((state) => state.runPipeline);
+  const [showProviderSettings, setShowProviderSettings] = useState(false);
 
   const resetView = () => {
     setViewport({ x: 100, y: 100, zoom: 1 });
@@ -79,7 +82,19 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
           <Map size={13} />
           Minimap
         </button>
+
+        {/* Provider Settings (BYOK) */}
+        <button
+          onClick={() => setShowProviderSettings(true)}
+          title="Provider Settings"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 text-slate-400 hover:text-indigo-400 hover:border-indigo-500/30 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer"
+        >
+          <KeyRound size={13} />
+          Providers
+        </button>
       </div>
+
+      {showProviderSettings && <ProviderSettingsModal onClose={() => setShowProviderSettings(false)} />}
     </div>
   );
 }
