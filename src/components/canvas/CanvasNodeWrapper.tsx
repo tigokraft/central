@@ -7,6 +7,10 @@ interface CanvasNodeWrapperProps {
   children: React.ReactNode;
 }
 
+// Matches the dotted background grid in InfiniteCanvas so a dropped card visually locks
+// into the same rhythm the grid implies.
+const SNAP_SIZE = 16;
+
 export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperProps) {
   const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
   const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
@@ -102,6 +106,16 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
       updateNodePosition(node.id, nextX, nextY, { dx: dx / zoom, dy: dy / zoom });
 
       if (last) {
+        // Snap the dragged node (and anything moving with it) to the nearest grid line on
+        // release, so a batch of cards dropped near each other lock into clean alignment.
+        const snapCorrectionX = Math.round(nextX / SNAP_SIZE) * SNAP_SIZE - nextX;
+        const snapCorrectionY = Math.round(nextY / SNAP_SIZE) * SNAP_SIZE - nextY;
+        if (snapCorrectionX !== 0 || snapCorrectionY !== 0) {
+          updateNodePosition(node.id, nextX + snapCorrectionX, nextY + snapCorrectionY, {
+            dx: snapCorrectionX,
+            dy: snapCorrectionY,
+          });
+        }
         reparentNode(node.id);
       }
     },
