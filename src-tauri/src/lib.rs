@@ -2,6 +2,7 @@ mod pty_manager;
 mod graph_runner;
 mod git_engine;
 mod ephemeral;
+mod mcp;
 pub mod memory;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -17,6 +18,7 @@ pub fn run() {
         .manage(pty_manager::PtyManager::default())
         .manage(graph_runner::GraphRunnerState::default())
         .manage(git_engine::GitEngineState::default())
+        .manage(mcp::McpManagerState::default())
         .setup(|app| {
             #[cfg(target_os = "windows")]
             {
@@ -42,6 +44,11 @@ pub fn run() {
             git_engine::rollback_worktree,
             git_engine::get_repo_head,
             ephemeral::run_ephemeral_command,
+            mcp::commands::mcp_connect_server,
+            mcp::commands::mcp_disconnect_server,
+            mcp::commands::mcp_list_tools,
+            mcp::commands::mcp_call_tool,
+            mcp::commands::mcp_list_servers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
