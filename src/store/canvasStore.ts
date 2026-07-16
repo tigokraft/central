@@ -113,12 +113,14 @@ interface CanvasState {
     x: number;
     y: number;
   } | null;
-  
+  pointerCanvasPosition: { x: number; y: number } | null;
+
   // Setters & Actions
   setViewport: (viewport: Partial<Viewport>) => void;
   panViewport: (dx: number, dy: number) => void;
   zoomViewport: (scale: number, mouseX?: number, mouseY?: number) => void;
   setActiveTool: (tool: "select" | "hand" | "frame") => void;
+  setPointerCanvasPosition: (x: number, y: number) => void;
   
   // Node Actions
   addNode: (
@@ -234,6 +236,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   ],
   activeTool: "select",
   draggingEdge: null,
+  pointerCanvasPosition: null,
   edgeExecState: {},
   cableDiffStats: {},
   isPipelineRunning: false,
@@ -271,6 +274,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
 
   setActiveTool: (tool) => set({ activeTool: tool }),
+
+  setPointerCanvasPosition: (x, y) => set({ pointerCanvasPosition: { x, y } }),
 
   addNode: (type, x, y, overrides) => {
     const id = `${type}-${Date.now()}-${nextNodeSeq()}`;
