@@ -10,7 +10,8 @@ import {
   Terminal,
   Box,
   MessageSquare,
-  Brain
+  Brain,
+  Frame as FrameIcon
 } from "lucide-react";
 import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
 import SVGEdgeLayer from "./SVGEdgeLayer";
@@ -22,6 +23,8 @@ import TerminalNode from "./nodes/TerminalNode";
 import ActionContainerNode from "./nodes/ActionContainerNode";
 import PromptNode from "./nodes/PromptNode";
 import MemoryNode from "./nodes/MemoryNode";
+import ActionFrameNode from "./nodes/ActionFrameNode";
+import EphemeralActionNode from "./nodes/EphemeralActionNode";
 
 interface InfiniteCanvasProps {
   showMinimap: boolean;
@@ -417,6 +420,10 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         return <PromptNode node={node} />;
       case "memoryNode":
         return <MemoryNode node={node} />;
+      case "actionFrameNode":
+        return <ActionFrameNode node={node} />;
+      case "ephemeralActionNode":
+        return <EphemeralActionNode node={node} />;
     }
   };
 
@@ -620,6 +627,13 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
               >
                 <Brain size={12} className="text-pink-500" />
                 Add Neural Memory
+              </button>
+              <button
+                onClick={() => handleAddNodeFromMenu("actionFrameNode")}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
+              >
+                <FrameIcon size={12} className="text-indigo-400" />
+                Add Action Frame
               </button>
             </>
           ) : (
