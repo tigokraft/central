@@ -52,13 +52,13 @@ pub struct GraphEdgeInput {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct NodeEventPayload {
-    node_id: String,
-    message: Option<String>,
-    output: Option<String>,
-    exit_code: Option<i32>,
-    retry_count: Option<u32>,
-    max_retries: Option<u32>,
+pub(crate) struct NodeEventPayload {
+    pub node_id: String,
+    pub message: Option<String>,
+    pub output: Option<String>,
+    pub exit_code: Option<i32>,
+    pub retry_count: Option<u32>,
+    pub max_retries: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -506,9 +506,23 @@ async fn run_shell_command(
     input_context: &str,
     working_dir: &Path,
 ) -> Result<(String, i32), String> {
+    run_shell_command_raw(&ctx.app, node_id, command, working_dir, &[("CENTRAL_PIPELINE_INPUT", input_context)]).await
+}
+
+// Runs a shell command with live output streaming, independent of any graph ExecutionContext.
+// Shared by graph node execution and disposable ephemeral one-off commands.
+pub(crate) async fn run_shell_command_raw(
+    app: &AppHandle,
+    node_id: &str,
+    command: &str,
+    working_dir: &Path,
+    env: &[(&str, &str)],
+) -> Result<(String, i32), String> {
     let mut cmd = shell_command(command);
     cmd.current_dir(working_dir);
-    cmd.env("CENTRAL_PIPELINE_INPUT", input_context);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -521,8 +535,8 @@ async fn run_shell_command(
 
     let collected = Arc::new(TokioMutex::new(String::new()));
 
-    let stdout_task = tokio::spawn(stream_lines(ctx.app.clone(), node_id.to_string(), stdout, collected.clone()));
-    let stderr_task = tokio::spawn(stream_lines(ctx.app.clone(), node_id.to_string(), stderr, collected.clone()));
+    let stdout_task = tokio::spawn(stream_lines(app.clone(), node_id.to_string(), stdout, collected.clone()));
+    let stderr_task = tokio::spawn(stream_lines(app.clone(), node_id.to_string(), stderr, collected.clone()));
 
     let status = child
         .wait()
@@ -552,7 +566,7 @@ async fn stream_lines(
     }
 }
 
-fn emit_stream(app: &AppHandle, node_id: &str, chunk: &str) {
+pub(crate) fn emit_stream(app: &AppHandle, node_id: &str, chunk: &str) {
     emit_event(
         app,
         "node-streaming",
@@ -567,7 +581,7 @@ fn emit_stream(app: &AppHandle, node_id: &str, chunk: &str) {
     );
 }
 
-fn emit_event(app: &AppHandle, event: &str, payload: NodeEventPayload) {
+pub(crate) fn emit_event(app: &AppHandle, event: &str, payload: NodeEventPayload) {
     let _ = app.emit(event, payload);
 }
 
