@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,10 +10,12 @@ use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::Direction;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex as TokioMutex;
+
+use crate::git_engine::GitEngineState;
 
 const DEFAULT_MAX_RETRIES: u32 = 3;
 const CHECK_NODE_TYPES: [&str; 2] = ["actionContainerNode", "terminalNode"];
@@ -64,6 +66,17 @@ struct NodeEventPayload {
 struct GraphEventPayload {
     ok: bool,
     message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CableHandoffPayload {
+    source_node_id: String,
+    target_node_id: String,
+    commit_sha: String,
+    insertions: usize,
+    deletions: usize,
+    files_changed: usize,
 }
 
 #[derive(Default)]
@@ -171,6 +184,8 @@ pub fn execute_graph(
 
 async fn run_graph(ctx: Arc<ExecutionContext>) -> Result<(), String> {
     let all_ids: Vec<String> = ctx.node_of.keys().cloned().collect();
+    ctx.app.state::<GitEngineState>().prepare_run(&ctx.working_dir, &all_ids);
+
     let mut completed: HashSet<String> = HashSet::new();
 
     while completed.len() < all_ids.len() {
@@ -269,6 +284,7 @@ async fn execute_with_retries(ctx: &Arc<ExecutionContext>, node_id: &str) -> Res
                         max_retries: Some(max_retries),
                     },
                 );
+                perform_handoffs(ctx, node_id);
                 return Ok(());
             }
             Ok((output, exit_code)) => {
@@ -351,7 +367,8 @@ async fn run_node_body(
             if command.trim().is_empty() {
                 Ok((input_context.to_string(), 0))
             } else {
-                run_shell_command(ctx, node_id, &command, input_context).await
+                let exec_dir = resolve_exec_dir(ctx, node_id);
+                run_shell_command(ctx, node_id, &command, input_context, &exec_dir).await
             }
         }
         _ => Ok((input_context.to_string(), 0)),
@@ -416,15 +433,59 @@ async fn run_action_container(
         return Ok((input_context.to_string(), 0));
     }
 
+    // All actions in this container share the node's isolated worktree so their combined
+    // edits land in a single hand-off commit.
+    let exec_dir = resolve_exec_dir(ctx, node_id);
+
     let mut combined_output = String::new();
     for action in actions {
-        let (out, code) = run_shell_command(ctx, node_id, &action, input_context).await?;
+        let (out, code) = run_shell_command(ctx, node_id, &action, input_context, &exec_dir).await?;
         combined_output.push_str(&format!("$ {}\n{}\n", action, out));
         if code != 0 {
             return Ok((combined_output, code));
         }
     }
     Ok((combined_output, 0))
+}
+
+// Spawns (or reuses) an ephemeral git worktree so this node's shell commands run against
+// their own sandbox instead of the primary working tree. Falls back to the shared working
+// directory when the project isn't a git repository.
+fn resolve_exec_dir(ctx: &Arc<ExecutionContext>, node_id: &str) -> PathBuf {
+    ctx.app
+        .state::<GitEngineState>()
+        .ensure_worktree(&ctx.working_dir, node_id)
+        .unwrap_or_else(|_| ctx.working_dir.clone())
+}
+
+// Commits any pending edits in a node's sandbox worktree and emits a "cable-handoff" event
+// carrying diff stats for every downstream reviewer/test node, before that node runs.
+fn perform_handoffs(ctx: &Arc<ExecutionContext>, node_id: &str) {
+    let Some(&idx) = ctx.index_of.get(node_id) else { return };
+    let git_state = ctx.app.state::<GitEngineState>();
+
+    for target_idx in ctx.graph.neighbors_directed(idx, Direction::Outgoing) {
+        let target_id = &ctx.graph[target_idx];
+        let is_reviewer = ctx
+            .node_of
+            .get(target_id)
+            .is_some_and(|n| CHECK_NODE_TYPES.contains(&n.node_type.as_str()));
+        if !is_reviewer {
+            continue;
+        }
+
+        if let Ok(Some(result)) = git_state.commit_handoff(node_id, target_id) {
+            let payload = CableHandoffPayload {
+                source_node_id: node_id.to_string(),
+                target_node_id: target_id.clone(),
+                commit_sha: result.commit_sha,
+                insertions: result.insertions,
+                deletions: result.deletions,
+                files_changed: result.files_changed,
+            };
+            let _ = ctx.app.emit("cable-handoff", payload);
+        }
+    }
 }
 
 fn shell_command(command: &str) -> TokioCommand {
@@ -446,9 +507,10 @@ async fn run_shell_command(
     node_id: &str,
     command: &str,
     input_context: &str,
+    working_dir: &Path,
 ) -> Result<(String, i32), String> {
     let mut cmd = shell_command(command);
-    cmd.current_dir(&ctx.working_dir);
+    cmd.current_dir(working_dir);
     cmd.env("CENTRAL_PIPELINE_INPUT", input_context);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
