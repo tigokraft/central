@@ -36,6 +36,15 @@ interface NodeEventPayload {
   maxRetries?: number;
 }
 
+interface CableHandoffPayload {
+  sourceNodeId: string;
+  targetNodeId: string;
+  commitSha: string;
+  insertions: number;
+  deletions: number;
+  filesChanged: number;
+}
+
 export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const nodes = useCanvasStore((state) => state.nodes);
   const viewport = useCanvasStore((state) => state.viewport);
@@ -174,7 +183,8 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     const unlistenFns: Array<() => void> = [];
 
     const setup = async () => {
-      const { setNodeStatus, setEdgeExecStateForTarget, setPipelineRunning } = useCanvasStore.getState();
+      const { setNodeStatus, setEdgeExecStateForTarget, setCableDiffStat, setPipelineRunning } =
+        useCanvasStore.getState();
 
       unlistenFns.push(
         await listen<NodeEventPayload>("node-start", (e) => {
@@ -204,6 +214,16 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         await listen<NodeEventPayload>("node-fail", (e) => {
           setNodeStatus(e.payload.nodeId, "error");
           setEdgeExecStateForTarget(e.payload.nodeId, "fail");
+        })
+      );
+      unlistenFns.push(
+        await listen<CableHandoffPayload>("cable-handoff", (e) => {
+          setCableDiffStat(e.payload.sourceNodeId, e.payload.targetNodeId, {
+            insertions: e.payload.insertions,
+            deletions: e.payload.deletions,
+            filesChanged: e.payload.filesChanged,
+            commitSha: e.payload.commitSha,
+          });
         })
       );
       unlistenFns.push(await listen("graph-complete", () => setPipelineRunning(false)));
