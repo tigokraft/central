@@ -8,13 +8,18 @@ interface NodeToolbeltProps {
   nodeId: string;
 }
 
+// Stable reference so the zustand selector below never returns a fresh array when a node has
+// no attached tools yet (a `|| []` fallback would return a new array every read and trip
+// useSyncExternalStore's "getSnapshot should be cached" loop guard).
+const EMPTY_ATTACHED_TOOLS: AttachedMcpTool[] = [];
+
 // Compact per-node control: pick which provider/model powers this node, and attach specific
 // MCP tools from any currently connected server directly to it.
 export default function NodeToolbelt({ nodeId }: NodeToolbeltProps) {
   const [open, setOpen] = useState(false);
 
   const attachedTools = useCanvasStore(
-    (state) => state.nodes.find((n) => n.id === nodeId)?.data.attachedTools || []
+    (state) => state.nodes.find((n) => n.id === nodeId)?.data.attachedTools ?? EMPTY_ATTACHED_TOOLS
   );
   const attachMcpTool = useCanvasStore((state) => state.attachMcpTool);
   const detachMcpTool = useCanvasStore((state) => state.detachMcpTool);
