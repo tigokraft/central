@@ -278,6 +278,29 @@ pub fn get_repo_head() -> Result<RepoHeadInfo, String> {
     Ok(RepoHeadInfo { branch, commit_sha: commit.id().to_string() })
 }
 
+/// Renders the working tree's pending changes (staged + unstaged, against HEAD) as a unified
+/// patch, for the Terminal Node's "Inject Git Diff" context action.
+#[tauri::command]
+pub fn get_git_diff() -> Result<String, String> {
+    let repo = Repository::open(resolve_repo_root()).map_err(|e| e.to_string())?;
+    let head_tree = repo.head().and_then(|h| h.peel_to_tree()).map_err(|e| e.to_string())?;
+    let diff = repo
+        .diff_tree_to_workdir_with_index(Some(&head_tree), None)
+        .map_err(|e| e.to_string())?;
+
+    let mut patch = String::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            patch.push(line.origin());
+        }
+        patch.push_str(&String::from_utf8_lossy(line.content()));
+        true
+    })
+    .map_err(|e| e.to_string())?;
+
+    Ok(patch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
