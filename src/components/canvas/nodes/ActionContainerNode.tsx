@@ -3,6 +3,7 @@ import { useDrag } from "@use-gesture/react";
 import { Box, Settings, ArrowRight, Plus, Trash2 } from "lucide-react";
 import { useCanvasStore, CanvasNode } from "../../../store/canvasStore";
 import Port from "../Port";
+import NodeToolbelt from "./NodeToolbelt";
 
 interface ActionContainerNodeProps {
   node: CanvasNode;
@@ -91,7 +92,10 @@ export default function ActionContainerNode({ node }: ActionContainerNodeProps) 
             </span>
           )}
         </div>
-        <Settings size={12} className="text-slate-400 cursor-pointer hover:text-emerald-400 shrink-0" />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <NodeToolbelt nodeId={id} />
+          <Settings size={12} className="text-slate-400 cursor-pointer hover:text-emerald-400 shrink-0" />
+        </div>
       </div>
 
       {/* Description */}

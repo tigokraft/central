@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { MessageSquareCode, Save } from "lucide-react";
 import { useCanvasStore, CanvasNode } from "../../../store/canvasStore";
 import Port from "../Port";
+import NodeToolbelt from "./NodeToolbelt";
 
 interface PromptNodeProps {
   node: CanvasNode;
@@ -42,9 +43,12 @@ export default function PromptNode({ node }: PromptNodeProps) {
             {data.label || "Prompt Editor"}
           </span>
         </div>
-        <button className="p-0.5 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer">
-          <Save size={11} />
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <NodeToolbelt nodeId={id} />
+          <button className="p-0.5 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer">
+            <Save size={11} />
+          </button>
+        </div>
       </div>
 
       {/* Input Textarea */}
