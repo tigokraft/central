@@ -17,7 +17,10 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isSelected = selectedNodeIds.includes(node.id);
-  const isContainer = node.type === "actionContainerNode" || node.type === "actionFrameNode";
+  // Terminal cards are manually resizable/minimizable, so they need a fixed height driven
+  // by the store (like the other container types) instead of auto-sizing to content.
+  const isContainer =
+    node.type === "actionContainerNode" || node.type === "actionFrameNode" || node.type === "terminalNode";
 
   // Automatically measure actual laid-out dimensions and sync to store
   useEffect(() => {
