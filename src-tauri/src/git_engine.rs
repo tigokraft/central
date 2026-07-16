@@ -259,9 +259,19 @@ pub fn rollback_worktree(node_id: String, state: State<'_, GitEngineState>) -> R
     state.rollback_worktree(&node_id)
 }
 
+/// Resolves the project root the graph runner and git engine operate against. `tauri dev`
+/// runs with `src-tauri` as the working directory, so climb one level out of it.
+pub fn resolve_repo_root() -> PathBuf {
+    let mut dir = std::env::current_dir().unwrap_or_default();
+    if dir.ends_with("src-tauri") {
+        dir.pop();
+    }
+    dir
+}
+
 #[tauri::command]
-pub fn get_repo_head(repo_root: String) -> Result<RepoHeadInfo, String> {
-    let repo = Repository::open(&repo_root).map_err(|e| e.to_string())?;
+pub fn get_repo_head() -> Result<RepoHeadInfo, String> {
+    let repo = Repository::open(resolve_repo_root()).map_err(|e| e.to_string())?;
     let head = repo.head().map_err(|e| e.to_string())?;
     let branch = head.shorthand().unwrap_or("HEAD").to_string();
     let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
