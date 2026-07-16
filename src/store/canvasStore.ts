@@ -1,9 +1,31 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 
+// Monotonic counter guarantees unique node ids even when several nodes are created
+// synchronously within the same millisecond (e.g. the orchestrator dropping a full plan).
+let nodeSeq = 0;
+function nextNodeSeq(): number {
+  nodeSeq += 1;
+  return nodeSeq;
+}
+
+export type AgentRole = "coder" | "reviewer" | "test-runner";
+
+export interface AttachedMcpTool {
+  serverId: string;
+  toolName: string;
+}
+
 export interface CanvasNode {
   id: string;
-  type: "terminalNode" | "actionContainerNode" | "promptNode" | "memoryNode" | "memoryGraphNote";
+  type:
+    | "terminalNode"
+    | "actionContainerNode"
+    | "promptNode"
+    | "memoryNode"
+    | "memoryGraphNote"
+    | "actionFrameNode"
+    | "ephemeralActionNode";
   x: number;
   y: number;
   width: number;
@@ -20,7 +42,22 @@ export interface CanvasNode {
     command?: string;
     isRunning?: boolean;
     status?: "idle" | "running" | "success" | "error";
+    role?: AgentRole;
+    ephemeral?: boolean;
+    attachedTools?: AttachedMcpTool[];
   };
+}
+
+// Container node types other nodes can be nested inside via parentId.
+const FRAME_CONTAINER_TYPES: CanvasNode["type"][] = ["actionContainerNode", "actionFrameNode"];
+
+export interface EphemeralArchiveEntry {
+  id: string;
+  label: string;
+  command: string;
+  status: "success" | "error";
+  output: string;
+  finishedAt: number;
 }
 
 export type EdgeExecState = "idle" | "streaming" | "success" | "fail";
@@ -84,12 +121,23 @@ interface CanvasState {
   setActiveTool: (tool: "select" | "hand" | "frame") => void;
   
   // Node Actions
-  addNode: (type: CanvasNode["type"], x: number, y: number) => string;
+  addNode: (
+    type: CanvasNode["type"],
+    x: number,
+    y: number,
+    overrides?: Partial<Omit<CanvasNode, "id" | "type">>
+  ) => string;
   updateNodePosition: (id: string, x: number, y: number, dragDelta?: { dx: number; dy: number }) => void;
   updateNodeDimensions: (id: string, width: number, height: number) => void;
   updateNodeData: (id: string, data: Partial<CanvasNode["data"]>) => void;
   reparentNode: (nodeId: string) => void;
   deleteNode: (id: string) => void;
+  attachMcpTool: (nodeId: string, tool: AttachedMcpTool) => void;
+  detachMcpTool: (nodeId: string, tool: AttachedMcpTool) => void;
+
+  // Disposable ephemeral nodes
+  ephemeralArchive: EphemeralArchiveEntry[];
+  archiveEphemeralRun: (entry: EphemeralArchiveEntry) => void;
 
   // Edge Actions
   addEdge: (sourceId: string, sourceHandle: string, targetId: string, targetHandle: string) => void;
@@ -224,8 +272,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setActiveTool: (tool) => set({ activeTool: tool }),
 
-  addNode: (type, x, y) => {
-    const id = `${type}-${Date.now()}`;
+  addNode: (type, x, y, overrides) => {
+    const id = `${type}-${Date.now()}-${nextNodeSeq()}`;
     let label = "";
     let data: CanvasNode["data"] = { label };
     let width = 320;
@@ -255,6 +303,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         label = "Neural Memory";
         data = { label, facts: ["App uses Tauri", "Memory Node added"] };
         break;
+      case "actionFrameNode":
+        label = "Action Frame";
+        data = { label, description: "Orchestrated agent group" };
+        width = 900;
+        height = 360;
+        break;
+      case "ephemeralActionNode":
+        label = "Ad-hoc Check";
+        data = { label, command: "echo hello", status: "idle", ephemeral: true };
+        width = 280;
+        height = 110;
+        break;
     }
 
     const newNode: CanvasNode = {
@@ -264,7 +324,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       y,
       width,
       height,
-      data,
+      ...overrides,
+      data: { ...data, ...overrides?.data },
     };
 
     set((state) => ({
@@ -320,18 +381,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   reparentNode: (nodeId) =>
     set((state) => {
       const node = state.nodes.find((n) => n.id === nodeId);
-      if (!node || node.type === "actionContainerNode") return {};
+      // Frames are always top-level; only they and plain action containers act as containers.
+      if (!node || node.type === "actionFrameNode") return {};
 
       const nodeCenterX = node.x + node.width / 2;
       const nodeCenterY = node.y + node.height / 2;
 
       let newParentId: string | undefined = undefined;
 
-      // Find the topmost ActionContainer that bounds this node
-      // Iterate in reverse order so we get the topmost rendered container
+      // Find the topmost container that bounds this node.
+      // Iterate in reverse order so we get the topmost rendered container.
+      // An actionContainerNode may only nest inside an actionFrameNode (Figma-style group),
+      // never inside another actionContainerNode; every other node type may nest in either.
       for (let i = state.nodes.length - 1; i >= 0; i--) {
         const container = state.nodes[i];
-        if (container.id === nodeId || container.type !== "actionContainerNode") continue;
+        if (container.id === nodeId || !FRAME_CONTAINER_TYPES.includes(container.type)) continue;
+        if (container.type === "actionContainerNode" && node.type === "actionContainerNode") continue;
         if (
           nodeCenterX >= container.x &&
           nodeCenterX <= container.x + container.width &&
@@ -354,6 +419,37 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => ({
       nodes: state.nodes.filter((n) => n.id !== id).map((n) => n.parentId === id ? { ...n, parentId: undefined } : n),
       edges: state.edges.filter((e) => e.source !== id && e.target !== id),
+    })),
+
+  attachMcpTool: (nodeId, tool) =>
+    set((state) => ({
+      nodes: state.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const existing = n.data.attachedTools || [];
+        if (existing.some((t) => t.serverId === tool.serverId && t.toolName === tool.toolName)) return n;
+        return { ...n, data: { ...n.data, attachedTools: [...existing, tool] } };
+      }),
+    })),
+
+  detachMcpTool: (nodeId, tool) =>
+    set((state) => ({
+      nodes: state.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const existing = n.data.attachedTools || [];
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            attachedTools: existing.filter((t) => !(t.serverId === tool.serverId && t.toolName === tool.toolName)),
+          },
+        };
+      }),
+    })),
+
+  ephemeralArchive: [],
+  archiveEphemeralRun: (entry) =>
+    set((state) => ({
+      ephemeralArchive: [entry, ...state.ephemeralArchive].slice(0, 30),
     })),
 
   addEdge: (sourceId, sourceHandle, targetId, targetHandle) =>
