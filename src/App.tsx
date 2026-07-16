@@ -2,6 +2,7 @@ import { useState } from "react";
 import Topbar from "./components/Topbar";
 import Sidebar from "./components/Sidebar";
 import InfiniteCanvas from "./components/canvas/InfiniteCanvas";
+import OrchestratorBar from "./components/canvas/OrchestratorBar";
 import CustomTitleBar from "./components/CustomTitleBar";
 import { useCanvasStore } from "./store/canvasStore";
 
@@ -32,6 +33,7 @@ export default function App() {
             showMinimap={showMinimap}
             setShowMinimap={setShowMinimap}
           />
+          <OrchestratorBar />
           <div className="flex-1 relative">
             <InfiniteCanvas
               showMinimap={showMinimap}
