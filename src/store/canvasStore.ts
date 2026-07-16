@@ -136,7 +136,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       data: {
         label: "Action Container Pipeline",
         description: "Validation check and source formatting process pipeline.",
-        actions: ["echo 'Lint passed'", "echo 'Format check passed'", "echo 'Tests passed'"],
+        actions: [
+          "echo 'Lint passed'",
+          "echo 'Format check passed'",
+          "echo 'agent patch' > agent-patch.txt",
+          "echo 'Tests passed'",
+        ],
       },
     },
     {
