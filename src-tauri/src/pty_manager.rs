@@ -1,14 +1,22 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::io::{Read, Write};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize, MasterPty, Child};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State, Manager};
 
+// Every spawned PTY gets a unique instance id, even when it reuses a node_id that a
+// previous (now-killed) session also used. This lets a stale reader thread recognize that
+// the session it was reading has already been replaced, so it never tears down or emits an
+// exit event for the wrong, currently-live PTY instance.
+static PTY_INSTANCE_SEQ: AtomicU64 = AtomicU64::new(0);
+
 pub struct PtyProcess {
     pub master: Box<dyn MasterPty + Send>,
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
+    pub instance_id: u64,
 }
 
 #[derive(Default)]
@@ -87,6 +95,7 @@ pub fn spawn_pty(
     let writer_shared = Arc::new(Mutex::new(writer));
     let child_boxed: Box<dyn Child + Send + Sync> = child;
     let child_shared = Arc::new(Mutex::new(child_boxed));
+    let instance_id = PTY_INSTANCE_SEQ.fetch_add(1, Ordering::SeqCst);
 
     // Store PTY process information
     {
@@ -97,6 +106,7 @@ pub fn spawn_pty(
                 master: pair.master,
                 writer: writer_shared.clone(),
                 child: child_shared.clone(),
+                instance_id,
             },
         );
     }
@@ -121,19 +131,30 @@ pub fn spawn_pty(
             }
         }
 
-        // Cleanup process on thread finish
-        if let Some(mgr) = app_handle_clone.try_state::<PtyManager>() {
+        // Only tear down and notify the frontend if this thread's PTY instance is still
+        // the one registered for node_id. If it was already replaced by a fresher respawn,
+        // silently exit instead of clobbering the newer session's state.
+        let is_current_instance = if let Some(mgr) = app_handle_clone.try_state::<PtyManager>() {
             let mut processes = mgr.processes.lock().unwrap();
-            processes.remove(&node_id_clone);
-        }
+            let is_current = processes
+                .get(&node_id_clone)
+                .is_some_and(|p| p.instance_id == instance_id);
+            if is_current {
+                processes.remove(&node_id_clone);
+            }
+            is_current
+        } else {
+            false
+        };
 
-        // Emit exit event
-        let _ = app_handle_clone.emit(
-            "pty-exit",
-            PtyExitPayload {
-                node_id: node_id_clone,
-            },
-        );
+        if is_current_instance {
+            let _ = app_handle_clone.emit(
+                "pty-exit",
+                PtyExitPayload {
+                    node_id: node_id_clone,
+                },
+            );
+        }
     });
 
     Ok(())
