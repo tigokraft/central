@@ -1,12 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
-  MousePointer,
-  Hand,
-  Square,
-  ZoomIn,
-  ZoomOut,
-  Maximize,
   Terminal,
   Box,
   MessageSquare,
@@ -17,6 +11,7 @@ import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
 import SVGEdgeLayer from "./SVGEdgeLayer";
 import CanvasNodeWrapper from "./CanvasNodeWrapper";
 import Minimap from "./Minimap";
+import Toolbar from "./Toolbar";
 
 // Nodes
 import TerminalNode from "./nodes/TerminalNode";
@@ -54,7 +49,6 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const activeTool = useCanvasStore((state) => state.activeTool);
   const panViewport = useCanvasStore((state) => state.panViewport);
   const zoomViewport = useCanvasStore((state) => state.zoomViewport);
-  const setViewport = useCanvasStore((state) => state.setViewport);
   const setActiveTool = useCanvasStore((state) => state.setActiveTool);
   const addNode = useCanvasStore((state) => state.addNode);
   const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
@@ -415,10 +409,6 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     setContextMenu(null);
   };
 
-  const resetView = () => {
-    setViewport({ x: 100, y: 100, zoom: 1 });
-  };
-
   // Cursor style logic
   let cursorClass = "cursor-default";
   if (isSpaceActive || activeTool === "hand") {
@@ -453,75 +443,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
 
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-slate-900 relative h-full">
-      {/* Floating Figma Toolbar */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-950/90 backdrop-blur-md border border-slate-800 rounded-xl px-4 py-2 flex items-center gap-6 shadow-2xl z-30 select-none">
-        {/* Tools */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setActiveTool("select")}
-            title="Select Tool (V)"
-            className={`p-1.5 rounded-lg transition-all cursor-pointer ${
-              activeTool === "select"
-                ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <MousePointer size={15} />
-          </button>
-          <button
-            onClick={() => setActiveTool("hand")}
-            title="Hand Tool (H)"
-            className={`p-1.5 rounded-lg transition-all cursor-pointer ${
-              activeTool === "hand"
-                ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Hand size={15} />
-          </button>
-          <button
-            onClick={() => setActiveTool("frame")}
-            title="Frame Tool (F)"
-            className={`p-1.5 rounded-lg transition-all cursor-pointer ${
-              activeTool === "frame"
-                ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Square size={15} />
-          </button>
-        </div>
-
-        <div className="h-4 w-px bg-slate-800" />
-
-        {/* View Controls */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => zoomViewport(1.1)}
-            title="Zoom In"
-            className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-          >
-            <ZoomIn size={14} />
-          </button>
-          <span className="text-[10px] text-slate-400 font-mono w-10 text-center select-none">
-            {Math.round(viewport.zoom * 100)}%
-          </span>
-          <button
-            onClick={() => zoomViewport(0.9)}
-            title="Zoom Out"
-            className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-          >
-            <ZoomOut size={14} />
-          </button>
-          <button
-            onClick={resetView}
-            title="Reset View"
-            className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-          >
-            <Maximize size={14} />
-          </button>
-        </div>
-      </div>
+      <Toolbar />
 
       {/* Main Gesture Interactive Container */}
       <div
