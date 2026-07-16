@@ -181,6 +181,24 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     return () => window.removeEventListener("click", closeMenu);
   }, []);
 
+  // Track the live cursor position in canvas space so quick-launch actions (e.g. the
+  // Toolbar's agent launcher buttons) can drop new nodes right where the user is looking.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handlePointerTrack = (e: PointerEvent) => {
+      const rect = container.getBoundingClientRect();
+      const { viewport, setPointerCanvasPosition } = useCanvasStore.getState();
+      const canvasX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
+      const canvasY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
+      setPointerCanvasPosition(canvasX, canvasY);
+    };
+
+    container.addEventListener("pointermove", handlePointerTrack);
+    return () => container.removeEventListener("pointermove", handlePointerTrack);
+  }, []);
+
   // Graph execution event wiring: syncs node/edge visuals to the Rust execute_graph run
   useEffect(() => {
     const unlistenFns: Array<() => void> = [];
