@@ -1,6 +1,7 @@
 mod pty_manager;
 mod graph_runner;
 mod git_engine;
+mod ephemeral;
 pub mod memory;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -40,6 +41,7 @@ pub fn run() {
             git_engine::list_active_worktrees,
             git_engine::rollback_worktree,
             git_engine::get_repo_head,
+            ephemeral::run_ephemeral_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
