@@ -16,6 +16,15 @@ export interface AttachedMcpTool {
   toolName: string;
 }
 
+export type TerminalContextMode = "isolated" | "memory-aware";
+
+// A fact manually attached to a terminal node via the "Attach .aimem Fact" HUD button,
+// as opposed to one supplied live by a cabled MemoryNode (tracked by attachedMemoryIds).
+export interface AttachedFact {
+  id: string;
+  content: string;
+}
+
 export interface CanvasNode {
   id: string;
   type:
@@ -45,6 +54,10 @@ export interface CanvasNode {
     role?: AgentRole;
     ephemeral?: boolean;
     attachedTools?: AttachedMcpTool[];
+    contextMode?: TerminalContextMode;
+    attachedMemoryIds?: string[];
+    attachedFacts?: AttachedFact[];
+    minimized?: boolean;
   };
 }
 
@@ -79,6 +92,10 @@ export interface CanvasEdge {
 
 export function getHandlePosition(node: CanvasNode, handleId: string): { x: number; y: number } {
   if (node.type === "terminalNode") {
+    if (handleId === "context") {
+      // Left-middle socket dedicated to MemoryNode context cables.
+      return { x: node.x, y: node.y + node.height / 2 };
+    }
     if (handleId === "trigger" || handleId === "input" || handleId === "top" || handleId === "done") {
       // If it is top, trigger, input
       if (handleId === "done") {
@@ -479,15 +496,55 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         targetHandle,
       };
 
+      // Dragging a cable from a MemoryNode into a terminal's dedicated "context" socket
+      // attaches that memory record to the node, so its facts can prefix future commands.
+      const sourceNode = state.nodes.find((n) => n.id === sourceId);
+      const targetNode = state.nodes.find((n) => n.id === targetId);
+      const isMemoryContextLink =
+        sourceNode?.type === "memoryNode" &&
+        targetNode?.type === "terminalNode" &&
+        targetHandle === "context";
+
+      const nodes = isMemoryContextLink
+        ? state.nodes.map((n) => {
+            if (n.id !== targetId) return n;
+            const existingIds = n.data.attachedMemoryIds || [];
+            if (existingIds.includes(sourceId)) return n;
+            return { ...n, data: { ...n.data, attachedMemoryIds: [...existingIds, sourceId] } };
+          })
+        : state.nodes;
+
       return {
+        nodes,
         edges: [...state.edges, newEdge],
       };
     }),
 
   deleteEdge: (id) =>
-    set((state) => ({
-      edges: state.edges.filter((e) => e.id !== id),
-    })),
+    set((state) => {
+      const removed = state.edges.find((e) => e.id === id);
+      const nodes =
+        removed && removed.targetHandle === "context"
+          ? state.nodes.map((n) =>
+              n.id === removed.target
+                ? {
+                    ...n,
+                    data: {
+                      ...n.data,
+                      attachedMemoryIds: (n.data.attachedMemoryIds || []).filter(
+                        (memId) => memId !== removed.source
+                      ),
+                    },
+                  }
+                : n
+            )
+          : state.nodes;
+
+      return {
+        nodes,
+        edges: state.edges.filter((e) => e.id !== id),
+      };
+    }),
 
   startDraggingEdge: (sourceId, sourceHandle, x, y) =>
     set({
