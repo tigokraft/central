@@ -27,6 +27,13 @@ pub struct SearchResult {
     pub score: f32,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AimemFact {
+    pub id: String,
+    pub content: String,
+    pub created_at: String,
+}
+
 // Ensure the directories exist
 fn ensure_dirs() -> (PathBuf, PathBuf) {
     let base = Path::new(".nodecode");
@@ -190,4 +197,39 @@ pub async fn supersede_record(old_id: String, new_id: String) -> Result<(), Stri
 pub async fn export_to_obsidian() -> Result<(), String> {
     println!("All files synced to .nodecode/vault/ successfully!");
     Ok(())
+}
+
+/// Lists every `.aimem` record on disk (newest first) for the Terminal Node's
+/// "Attach .aimem Fact" context action.
+#[tauri::command]
+pub fn list_aimem_facts() -> Result<Vec<AimemFact>, String> {
+    let (memory_dir, _vault_dir) = ensure_dirs();
+
+    let entries = match fs::read_dir(&memory_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(vec![]),
+    };
+
+    let mut facts: Vec<AimemFact> = entries
+        .flatten()
+        .filter(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("aimem"))
+        .filter_map(|entry| {
+            let path = entry.path();
+            let id = path.file_stem()?.to_str()?.to_string();
+            let raw = fs::read_to_string(&path).ok()?;
+            // Body sits after the second `---` frontmatter delimiter.
+            let content = raw.splitn(3, "---").nth(2).unwrap_or(&raw).trim().to_string();
+            let created_at = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis().to_string())
+                .unwrap_or_default();
+            Some(AimemFact { id, content, created_at })
+        })
+        .collect();
+
+    facts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(facts)
 }
