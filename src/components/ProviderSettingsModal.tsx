@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { X, KeyRound, Eye, EyeOff, Cpu } from "lucide-react";
 import { useProviderStore, ByokProviderId, PROVIDER_LABELS, PROVIDER_MODELS } from "../store/providerStore";
+import Modal from "./ui/Modal";
 
 interface ProviderSettingsModalProps {
   onClose: () => void;
@@ -20,17 +21,10 @@ export default function ProviderSettingsModal({ onClose }: ProviderSettingsModal
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center"
-      onClick={onClose}
-    >
-      <div
-        className="w-[420px] max-h-[80vh] overflow-y-auto bg-slate-950 border border-slate-800 rounded-xl shadow-2xl p-4"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={onClose} width={420}>
         <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
           <div className="flex items-center gap-2">
-            <KeyRound size={14} className="text-indigo-400" />
+            <KeyRound size={14} className="text-emerald-400" />
             <span className="text-xs font-semibold text-slate-200 uppercase tracking-wide">
               Provider Settings (BYOK)
             </span>
@@ -57,7 +51,7 @@ export default function ProviderSettingsModal({ onClose }: ProviderSettingsModal
                   value={apiKeys[provider] || ""}
                   onChange={(e) => setApiKey(provider, e.target.value)}
                   placeholder={`${PROVIDER_LABELS[provider]} API key`}
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1.5 pr-8 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 font-mono"
+                  className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1.5 pr-8 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50 font-mono"
                 />
                 <button
                   type="button"
@@ -80,7 +74,7 @@ export default function ProviderSettingsModal({ onClose }: ProviderSettingsModal
               value={ollamaBaseUrl}
               onChange={(e) => setOllamaBaseUrl(e.target.value)}
               placeholder="http://localhost:11434"
-              className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500/50 font-mono"
+              className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50 font-mono"
             />
           </div>
         </div>
@@ -96,7 +90,7 @@ export default function ProviderSettingsModal({ onClose }: ProviderSettingsModal
                 const provider = e.target.value as keyof typeof PROVIDER_MODELS;
                 setDefaultProvider(provider, PROVIDER_MODELS[provider][0].id);
               }}
-              className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500/50 cursor-pointer"
+              className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-emerald-500/50 cursor-pointer"
             >
               {(Object.keys(PROVIDER_LABELS) as (keyof typeof PROVIDER_LABELS)[]).map((id) => (
                 <option key={id} value={id}>
@@ -107,7 +101,7 @@ export default function ProviderSettingsModal({ onClose }: ProviderSettingsModal
             <select
               value={defaultModel}
               onChange={(e) => setDefaultProvider(defaultProvider, e.target.value)}
-              className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500/50 cursor-pointer"
+              className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-emerald-500/50 cursor-pointer"
             >
               {PROVIDER_MODELS[defaultProvider].map((m) => (
                 <option key={m.id} value={m.id}>
@@ -117,7 +111,6 @@ export default function ProviderSettingsModal({ onClose }: ProviderSettingsModal
             </select>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
