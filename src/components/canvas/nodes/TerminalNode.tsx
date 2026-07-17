@@ -223,6 +223,11 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     return () => cancelAnimationFrame(raf);
   }, [id, node.width, node.height, data.minimized]);
 
+  // Focuses the search input as soon as the search bar mounts.
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
+
   // Sync execution triggers from canvasState
   useEffect(() => {
     if (data.isRunning && data.command) {
