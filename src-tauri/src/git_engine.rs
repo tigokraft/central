@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{IndexAddOption, Oid, Repository, ResetType, Signature};
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -259,9 +259,24 @@ pub fn rollback_worktree(node_id: String, state: State<'_, GitEngineState>) -> R
     state.rollback_worktree(&node_id)
 }
 
-/// Resolves the project root the graph runner and git engine operate against. `tauri dev`
-/// runs with `src-tauri` as the working directory, so climb one level out of it.
-pub fn resolve_repo_root() -> PathBuf {
+/// Resolves the project root the graph runner and git engine operate against: the
+/// active project set via `set_active_project_path`, or (if none has been opened yet)
+/// the dev fallback of climbing one level out of `src-tauri`, since `tauri dev` runs
+/// with `src-tauri` as the working directory.
+pub fn resolve_repo_root(app: &AppHandle) -> PathBuf {
+    effective_repo_root(active_project_path(app))
+}
+
+fn active_project_path(app: &AppHandle) -> Option<PathBuf> {
+    app.try_state::<crate::ProjectState>()?.0.lock().unwrap().clone()
+}
+
+// Pure and AppHandle-free so the override-vs-fallback branching can be unit tested directly.
+fn effective_repo_root(active_project: Option<PathBuf>) -> PathBuf {
+    active_project.unwrap_or_else(default_repo_root)
+}
+
+fn default_repo_root() -> PathBuf {
     let mut dir = std::env::current_dir().unwrap_or_default();
     if dir.ends_with("src-tauri") {
         dir.pop();
@@ -270,8 +285,8 @@ pub fn resolve_repo_root() -> PathBuf {
 }
 
 #[tauri::command]
-pub fn get_repo_head() -> Result<RepoHeadInfo, String> {
-    let repo = Repository::open(resolve_repo_root()).map_err(|e| e.to_string())?;
+pub fn get_repo_head(app: AppHandle) -> Result<RepoHeadInfo, String> {
+    let repo = Repository::open(resolve_repo_root(&app)).map_err(|e| e.to_string())?;
     let head = repo.head().map_err(|e| e.to_string())?;
     let branch = head.shorthand().unwrap_or("HEAD").to_string();
     let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
@@ -281,8 +296,8 @@ pub fn get_repo_head() -> Result<RepoHeadInfo, String> {
 /// Renders the working tree's pending changes (staged + unstaged, against HEAD) as a unified
 /// patch, for the Terminal Node's "Inject Git Diff" context action.
 #[tauri::command]
-pub fn get_git_diff() -> Result<String, String> {
-    let repo = Repository::open(resolve_repo_root()).map_err(|e| e.to_string())?;
+pub fn get_git_diff(app: AppHandle) -> Result<String, String> {
+    let repo = Repository::open(resolve_repo_root(&app)).map_err(|e| e.to_string())?;
     let head_tree = repo.head().and_then(|h| h.peel_to_tree()).map_err(|e| e.to_string())?;
     let diff = repo
         .diff_tree_to_workdir_with_index(Some(&head_tree), None)
@@ -305,6 +320,17 @@ pub fn get_git_diff() -> Result<String, String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64 as TestSeq, Ordering as TestOrdering};
+
+    #[test]
+    fn effective_repo_root_prefers_active_project_over_default() {
+        let active = PathBuf::from("/tmp/some-other-project");
+        assert_eq!(effective_repo_root(Some(active.clone())), active);
+    }
+
+    #[test]
+    fn effective_repo_root_falls_back_to_default_when_no_project_is_active() {
+        assert_eq!(effective_repo_root(None), default_repo_root());
+    }
 
     static TEST_SEQ: TestSeq = TestSeq::new(0);
 
