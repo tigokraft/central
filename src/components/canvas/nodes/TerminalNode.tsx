@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDrag } from "@use-gesture/react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon, type ISearchResultChangeEvent } from "@xterm/addon-search";
 import {
   Terminal as TerminalIcon,
   Play,
@@ -10,6 +11,7 @@ import {
   Eraser,
   ChevronUp,
   ChevronDown,
+  X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
