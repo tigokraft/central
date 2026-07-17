@@ -78,6 +78,22 @@ export interface EphemeralArchiveEntry {
   finishedAt: number;
 }
 
+// One line submitted (on Enter) to a long-lived terminalNode's PTY session. Unlike
+// EphemeralArchiveEntry (one entry per whole ephemeral run), a persistent terminal is a
+// continuous shell, so history is tracked per submitted line rather than per process exit.
+// exitCode is left undefined for now: the PTY only reports full-process exit (see
+// pty_manager.rs), not per-command status, so there's no reliable way to attribute an exit
+// code to an individual line without shell integration (e.g. OSC 133) — left as a future
+// enhancement rather than guessed at.
+export interface TerminalRunHistoryEntry {
+  id: string;
+  nodeId: string;
+  nodeLabel: string;
+  command: string;
+  submittedAt: number;
+  exitCode?: number;
+}
+
 export type EdgeExecState = "idle" | "streaming" | "success" | "fail";
 
 export interface CableDiffStat {
@@ -193,6 +209,10 @@ interface CanvasState {
   // Disposable ephemeral nodes
   ephemeralArchive: EphemeralArchiveEntry[];
   archiveEphemeralRun: (entry: EphemeralArchiveEntry) => void;
+
+  // Persistent terminal sessions
+  terminalRunHistory: TerminalRunHistoryEntry[];
+  logTerminalCommand: (entry: TerminalRunHistoryEntry) => void;
 
   // Edge Actions
   addEdge: (sourceId: string, sourceHandle: string, targetId: string, targetHandle: string) => void;
@@ -487,6 +507,12 @@ export const useCanvasStore = create<CanvasState>()(
       ephemeralArchive: [entry, ...state.ephemeralArchive].slice(0, 30),
     })),
 
+  terminalRunHistory: [],
+  logTerminalCommand: (entry) =>
+    set((state) => ({
+      terminalRunHistory: [entry, ...state.terminalRunHistory].slice(0, 200),
+    })),
+
   addEdge: (sourceId, sourceHandle, targetId, targetHandle) => {
     beginHistoryBatch();
     set((state) => {
@@ -597,6 +623,7 @@ export const useCanvasStore = create<CanvasState>()(
       cableDiffStats: {},
       isPipelineRunning: false,
       ephemeralArchive: [],
+      terminalRunHistory: [],
       activeTool: "select",
       dragGuides: null,
     });
