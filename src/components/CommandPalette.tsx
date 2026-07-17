@@ -17,7 +17,13 @@ import {
 } from "lucide-react";
 import Modal from "./ui/Modal";
 import { cn } from "../lib/cn";
-import { useCanvasStore, NEW_PROJECT_TEMPLATE, type CanvasNode } from "../store/canvasStore";
+import {
+  useCanvasStore,
+  NEW_PROJECT_TEMPLATE,
+  type CanvasNode,
+  type CanvasEdge,
+  type Viewport,
+} from "../store/canvasStore";
 import { useAppViewStore } from "../store/appViewStore";
 
 interface CommandPaletteProps {
@@ -31,6 +37,12 @@ interface ProjectMeta {
   createdAt: number;
   lastModifiedAt: number;
   path: string;
+}
+
+interface ProjectGraph {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  viewport: Viewport;
 }
 
 interface Command {
@@ -96,7 +108,7 @@ export default function CommandPalette({ onClose, toggleMinimap }: CommandPalett
 
   const switchToProject = async (projectId: string) => {
     try {
-      const graph = await invoke("load_project_graph", { projectId });
+      const graph = await invoke<ProjectGraph | null>("load_project_graph", { projectId });
       useCanvasStore.getState().hydrateFromProject(projectId, graph ?? NEW_PROJECT_TEMPLATE);
       openProject(projectId);
     } catch (err) {
