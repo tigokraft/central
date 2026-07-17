@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDrag } from "@use-gesture/react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon, type ISearchResultChangeEvent } from "@xterm/addon-search";
 import {
   Terminal as TerminalIcon,
   Play,
@@ -10,6 +11,7 @@ import {
   Eraser,
   ChevronUp,
   ChevronDown,
+  X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -77,10 +79,15 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const termInstance = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   // True once spawn_pty resolves, so a resize triggered before the PTY exists doesn't
   // invoke resize_pty against a session that isn't registered yet.
   const ptyReadyRef = useRef(false);
   const [ptyStatus, setPtyStatus] = useState<"idle" | "running" | "error">("idle");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<ISearchResultChangeEvent | null>(null);
   // Remembers the expanded height so restoring from minimized doesn't have to guess it.
   const preMinimizeHeightRef = useRef(node.height);
 
@@ -107,8 +114,27 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     term.open(terminalRef.current);
     fitAddon.fit();
 
+    const searchAddon = new SearchAddon();
+    term.loadAddon(searchAddon);
+
     termInstance.current = term;
     fitAddonRef.current = fitAddon;
+    searchAddonRef.current = searchAddon;
+
+    const onSearchResultsDisposable = searchAddon.onDidChangeResults((event) => {
+      setSearchResult(event);
+    });
+
+    // Intercepts Cmd/Ctrl+F before xterm's own key handling (and before it reaches the PTY),
+    // scoped to this terminal instance since it only fires while its own textarea has focus.
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setSearchOpen(true);
+        return false;
+      }
+      return true;
+    });
 
     // Send local keystrokes directly to the PTY
     const onDataDisposable = term.onData((input) => {
@@ -169,6 +195,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     return () => {
       ptyReadyRef.current = false;
       onDataDisposable.dispose();
+      onSearchResultsDisposable.dispose();
       if (unlistenOutput) unlistenOutput();
       if (unlistenExit) unlistenExit();
       invoke("destroy_pty", { nodeId: id }).catch(console.error);
@@ -195,6 +222,11 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     });
     return () => cancelAnimationFrame(raf);
   }, [id, node.width, node.height, data.minimized]);
+
+  // Focuses the search input as soon as the search bar mounts.
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
 
   // Sync execution triggers from canvasState
   useEffect(() => {
@@ -271,6 +303,44 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
 
   const handleClearHistory = () => {
     termInstance.current?.clear();
+  };
+
+  // Highlights every match while marking the current one, matching the terminal's emerald accent.
+  const SEARCH_DECORATIONS = {
+    matchBackground: "#78350f",
+    matchBorder: "#f59e0b",
+    matchOverviewRuler: "#f59e0b",
+    activeMatchBackground: "#065f46",
+    activeMatchBorder: "#10b981",
+    activeMatchColorOverviewRuler: "#10b981",
+  };
+
+  const handleSearchQueryChange = (value: string) => {
+    setSearchQuery(value);
+    if (!value) {
+      searchAddonRef.current?.clearDecorations();
+      setSearchResult(null);
+      return;
+    }
+    searchAddonRef.current?.findNext(value, { incremental: true, decorations: SEARCH_DECORATIONS });
+  };
+
+  const handleSearchNext = () => {
+    if (!searchQuery) return;
+    searchAddonRef.current?.findNext(searchQuery, { decorations: SEARCH_DECORATIONS });
+  };
+
+  const handleSearchPrevious = () => {
+    if (!searchQuery) return;
+    searchAddonRef.current?.findPrevious(searchQuery, { decorations: SEARCH_DECORATIONS });
+  };
+
+  const handleSearchClose = () => {
+    searchAddonRef.current?.clearDecorations();
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchResult(null);
+    termInstance.current?.focus();
   };
 
   const handleToggleMinimize = () => {
@@ -375,6 +445,57 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
           </button>
         </div>
       </div>
+
+      {!data.minimized && searchOpen && (
+        <div className="bg-slate-950/80 px-2 py-1 flex items-center gap-1.5 border-b border-slate-800/80 shrink-0">
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => handleSearchQueryChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (e.shiftKey) handleSearchPrevious();
+                else handleSearchNext();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                handleSearchClose();
+              }
+            }}
+            placeholder="Search terminal..."
+            className="flex-1 min-w-0 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-[10px] font-mono text-emerald-300 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50"
+          />
+          <span className="text-[8px] font-mono text-slate-500 shrink-0 tabular-nums">
+            {searchQuery
+              ? searchResult && searchResult.resultCount > 0
+                ? `${searchResult.resultIndex + 1}/${searchResult.resultCount}`
+                : "0/0"
+              : ""}
+          </span>
+          <button
+            onClick={handleSearchPrevious}
+            title="Previous match (Shift+Enter)"
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+          >
+            <ChevronUp size={10} />
+          </button>
+          <button
+            onClick={handleSearchNext}
+            title="Next match (Enter)"
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+          >
+            <ChevronDown size={10} />
+          </button>
+          <button
+            onClick={handleSearchClose}
+            title="Close (Esc)"
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-red-400 transition-colors cursor-pointer"
+          >
+            <X size={10} />
+          </button>
+        </div>
+      )}
 
       {!data.minimized && (
         <>
