@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { GitBranch, Rocket, Container, Globe, RotateCcw } from "lucide-react";
+import { GitBranch, RotateCcw } from "lucide-react";
 
 interface WorktreeInfo {
   nodeId: string;
@@ -78,34 +78,6 @@ export default function DeploymentsTracker() {
         ) : (
           <div className="text-[10px] text-slate-600 italic">Not a git repository</div>
         )}
-      </div>
-
-      {/* Local dev server */}
-      <div className="flex items-center justify-between bg-slate-900/40 border border-slate-800 rounded p-1.5">
-        <span className="flex items-center gap-1.5 text-[10px] text-slate-300">
-          <Globe size={10} className="text-slate-500 shrink-0" />
-          localhost:1420
-        </span>
-        <span className="flex items-center gap-1 shrink-0">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-[8px] text-slate-500 uppercase">active</span>
-        </span>
-      </div>
-
-      {/* Illustrative staging provider slots — no live provider integration wired up yet */}
-      <div className="flex items-center justify-between bg-slate-900/40 border border-slate-800 rounded p-1.5 opacity-60">
-        <span className="flex items-center gap-1.5 text-[10px] text-slate-300">
-          <Rocket size={10} className="text-slate-500 shrink-0" />
-          Vercel / Netlify Preview
-        </span>
-        <span className="text-[8px] text-slate-600 uppercase shrink-0">not connected</span>
-      </div>
-      <div className="flex items-center justify-between bg-slate-900/40 border border-slate-800 rounded p-1.5 opacity-60">
-        <span className="flex items-center gap-1.5 text-[10px] text-slate-300">
-          <Container size={10} className="text-slate-500 shrink-0" />
-          Railway / Docker
-        </span>
-        <span className="text-[8px] text-slate-600 uppercase shrink-0">not connected</span>
       </div>
 
       {/* Active isolated worktrees, one per agent node that has run this session */}

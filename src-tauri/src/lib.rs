@@ -60,8 +60,6 @@ pub fn run() {
             pty_manager::destroy_pty,
             memory::engine::create_memory_record,
             memory::engine::query_memory_graph,
-            memory::engine::supersede_record,
-            memory::engine::export_to_obsidian,
             memory::engine::list_aimem_facts,
             graph_runner::execute_graph,
             git_engine::list_active_worktrees,

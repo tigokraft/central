@@ -23,9 +23,8 @@ export default function MemoryNode({ node }: MemoryNodeProps) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Active facts mock - in a real app this might be loaded via IPC on mount
-  const activeFacts = data.facts || ["App uses Tauri", "Canvas built from scratch"];
-  const entities = data.entities || ["MemoryLayer", "RustEngine"];
+  const activeFacts = data.facts || [];
+  const entities = data.entities || [];
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,9 +53,8 @@ export default function MemoryNode({ node }: MemoryNodeProps) {
       };
       
       await invoke("create_memory_record", { record });
-      
-      // Update local node state just to show something
-      const updatedFacts = [...activeFacts, "New memory created!"];
+
+      const updatedFacts = [...activeFacts, record.content];
       beginHistoryBatch();
       updateNodeData(id, { facts: updatedFacts });
       endHistoryBatch();
@@ -108,23 +106,31 @@ export default function MemoryNode({ node }: MemoryNodeProps) {
         <div className="grid grid-cols-2 gap-2 mb-2">
           <div className="bg-slate-800/50 rounded p-1.5 border border-slate-700/50">
             <h4 className="text-[9px] text-slate-400 font-mono mb-1">Active Facts</h4>
-            <ul className="text-[10px] text-slate-300 list-disc list-inside leading-tight space-y-0.5">
-              {activeFacts.map((fact: string, i: number) => (
-                <li key={i} className="truncate" title={fact}>{fact}</li>
-              ))}
-            </ul>
+            {activeFacts.length === 0 ? (
+              <div className="text-[9px] text-slate-600 italic">No facts yet</div>
+            ) : (
+              <ul className="text-[10px] text-slate-300 list-disc list-inside leading-tight space-y-0.5">
+                {activeFacts.map((fact: string, i: number) => (
+                  <li key={i} className="truncate" title={fact}>{fact}</li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="bg-slate-800/50 rounded p-1.5 border border-slate-700/50">
             <h4 className="text-[9px] text-slate-400 font-mono mb-1 flex items-center gap-1">
               <LinkIcon size={8} /> Entities
             </h4>
-            <div className="flex flex-wrap gap-1 mt-1">
-              {entities.map((ent: string, i: number) => (
-                <span key={i} className="text-[8px] bg-slate-700/60 text-slate-300 px-1 rounded border border-slate-600/60">
-                  {ent}
-                </span>
-              ))}
-            </div>
+            {entities.length === 0 ? (
+              <div className="text-[9px] text-slate-600 italic">No entities linked</div>
+            ) : (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {entities.map((ent: string, i: number) => (
+                  <span key={i} className="text-[8px] bg-slate-700/60 text-slate-300 px-1 rounded border border-slate-600/60">
+                    {ent}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

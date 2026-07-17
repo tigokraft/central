@@ -1,9 +1,7 @@
 import { useState } from "react";
 import {
-  Folder,
   ChevronRight,
   ChevronDown,
-  FileCode,
   Zap,
   Activity,
   ChevronLeft,
@@ -17,14 +15,11 @@ import McpServersPanel from "./sidebar/McpServersPanel";
 import EphemeralRunsPanel from "./sidebar/EphemeralRunsPanel";
 
 interface SidebarProps {
-  onLoadPreset: (presetName: string) => void;
   activeProcesses: { id: string; label: string; isRunning: boolean }[];
 }
 
-export default function Sidebar({ onLoadPreset, activeProcesses }: SidebarProps) {
+export default function Sidebar({ activeProcesses }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [projectOpen, setProjectOpen] = useState(true);
-  const [presetsOpen, setPresetsOpen] = useState(true);
   const [monitorOpen, setMonitorOpen] = useState(true);
   const [deploymentsOpen, setDeploymentsOpen] = useState(true);
   const [mcpOpen, setMcpOpen] = useState(true);
@@ -56,11 +51,8 @@ export default function Sidebar({ onLoadPreset, activeProcesses }: SidebarProps)
 
       {/* Sections Container */}
       <div className="flex-1 overflow-y-auto py-4 px-2 space-y-4">
-        {/* Project Explorer */}
         {isCollapsed ? (
           <div className="flex flex-col items-center gap-4 py-2 text-slate-500">
-            <div title="Project Explorer"><Folder size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
-            <div title="Presets"><Zap size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
             <div title="Process Monitor"><Activity size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
             <div title="Deployments"><Rocket size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
             <div title="MCP Servers"><Plug size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
@@ -68,84 +60,6 @@ export default function Sidebar({ onLoadPreset, activeProcesses }: SidebarProps)
           </div>
         ) : (
           <>
-            {/* Project Explorer Expanded */}
-            <div className="space-y-1">
-              <button
-                onClick={() => setProjectOpen(!projectOpen)}
-                className="w-full flex items-center justify-between text-xs font-semibold text-slate-400 hover:text-slate-200 px-2 py-1 cursor-pointer"
-              >
-                <span className="flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
-                  <Folder size={12} className="text-emerald-500" />
-                  Project Explorer
-                </span>
-                {projectOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              </button>
-
-              {projectOpen && (
-                <div className="pl-4 space-y-1 text-xs text-slate-400 font-mono py-1">
-                  <div className="flex items-center gap-1.5 py-0.5 hover:text-slate-200 cursor-pointer">
-                    <ChevronDown size={10} className="text-slate-600" />
-                    <span>src</span>
-                  </div>
-                  <div className="pl-4 space-y-0.5 border-l border-slate-800/80 ml-1">
-                    <div className="flex items-center gap-1.5 py-0.5 hover:text-slate-200 cursor-pointer">
-                      <FileCode size={11} className="text-slate-500" />
-                      <span>App.tsx</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 py-0.5 hover:text-slate-200 cursor-pointer">
-                      <FileCode size={11} className="text-slate-500" />
-                      <span>main.tsx</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 py-0.5 hover:text-slate-200 cursor-pointer">
-                    <ChevronRight size={10} className="text-slate-600" />
-                    <span>src-tauri</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 py-0.5 hover:text-slate-200 cursor-pointer pl-3">
-                    <FileCode size={11} className="text-slate-500" />
-                    <span>vite.config.ts</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Presets */}
-            <div className="space-y-1">
-              <button
-                onClick={() => setPresetsOpen(!presetsOpen)}
-                className="w-full flex items-center justify-between text-xs font-semibold text-slate-400 hover:text-slate-200 px-2 py-1 cursor-pointer"
-              >
-                <span className="flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
-                  <Zap size={12} className="text-emerald-500" />
-                  Execution Presets
-                </span>
-                {presetsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              </button>
-
-              {presetsOpen && (
-                <div className="space-y-1.5 py-1">
-                  <button
-                    onClick={() => onLoadPreset("Code Loop")}
-                    className="w-full text-left bg-slate-900/60 hover:bg-emerald-500/10 border border-slate-800 hover:border-emerald-500/30 rounded-lg p-2 transition-all group cursor-pointer"
-                  >
-                    <div className="font-semibold text-xs text-slate-300 group-hover:text-emerald-400">Code Loop</div>
-                    <div className="text-[10px] text-slate-500 group-hover:text-slate-400 mt-0.5 leading-normal">
-                      Auto-generate, lint, format, and run unit tests.
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => onLoadPreset("Review Pipeline")}
-                    className="w-full text-left bg-slate-900/60 hover:bg-emerald-500/10 border border-slate-800 hover:border-emerald-500/30 rounded-lg p-2 transition-all group cursor-pointer"
-                  >
-                    <div className="font-semibold text-xs text-slate-300 group-hover:text-emerald-400">Review Pipeline</div>
-                    <div className="text-[10px] text-slate-500 group-hover:text-slate-400 mt-0.5 leading-normal">
-                      Scan diff, generate review commits, run verification.
-                    </div>
-                  </button>
-                </div>
-              )}
-            </div>
-
             {/* Process Monitor */}
             <div className="space-y-1">
               <button

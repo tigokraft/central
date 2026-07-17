@@ -199,8 +199,7 @@ interface CanvasState {
     graph: { nodes: CanvasNode[]; edges: CanvasEdge[]; viewport: Viewport }
   ) => void;
 
-  // Presets & Execution
-  loadPreset: (presetName: string) => void;
+  // Execution
   runPipeline: () => Promise<void>;
 
   // Execution state (driven by graph_runner events)
@@ -232,68 +231,8 @@ export const useCanvasStore = create<CanvasState>()(
   setDragGuides: (guides) => set({ dragGuides: guides }),
 
   viewport: { x: 0, y: 0, zoom: 1 },
-  nodes: [
-    {
-      id: "prompt-1",
-      type: "promptNode",
-      x: 100,
-      y: 200,
-      width: 320,
-      height: 150,
-      data: {
-        label: "Prompt Input",
-        prompt: "Refactor terminal rendering to support dynamic dimensions and automatic fit resizing.",
-      },
-    },
-    {
-      id: "action-1",
-      type: "actionContainerNode",
-      x: 500,
-      y: 150,
-      width: 340,
-      height: 240,
-      data: {
-        label: "Action Container Pipeline",
-        description: "Validation check and source formatting process pipeline.",
-        actions: [
-          "echo 'Lint passed'",
-          "echo 'Format check passed'",
-          "echo 'agent patch' > agent-patch.txt",
-          "echo 'Tests passed'",
-        ],
-      },
-    },
-    {
-      id: "terminal-1",
-      type: "terminalNode",
-      x: 920,
-      y: 170,
-      width: 320,
-      height: 190,
-      data: {
-        label: "Tauri Compiler Console",
-        command: "echo 'Build verified' && exit 0",
-        isRunning: false,
-        status: "idle",
-      },
-    },
-  ],
-  edges: [
-    {
-      id: "e-prompt-action",
-      source: "prompt-1",
-      sourceHandle: "output",
-      target: "action-1",
-      targetHandle: "input",
-    },
-    {
-      id: "e-action-terminal",
-      source: "action-1",
-      sourceHandle: "output",
-      target: "terminal-1",
-      targetHandle: "trigger",
-    },
-  ],
+  nodes: [],
+  edges: [],
   activeProjectId: null,
   activeTool: "select",
   draggingEdge: null,
@@ -386,7 +325,7 @@ export const useCanvasStore = create<CanvasState>()(
         break;
       case "memoryNode":
         label = "Neural Memory";
-        data = { label, facts: ["App uses Tauri", "Memory Node added"] };
+        data = { label };
         break;
       case "actionFrameNode":
         label = "Action Frame";
@@ -654,132 +593,6 @@ export const useCanvasStore = create<CanvasState>()(
       dragGuides: null,
     });
     useCanvasStore.temporal.getState().clear();
-  },
-
-  loadPreset: (presetName) => {
-    beginHistoryBatch();
-    if (presetName === "Code Loop") {
-      set({
-        nodes: [
-          {
-            id: "prompt-loop",
-            type: "promptNode",
-            x: 80,
-            y: 220,
-            width: 320,
-            height: 150,
-            data: {
-              label: "Code Generation Prompt",
-              prompt: "Create a loop utility class with exponential backoff algorithm in TypeScript.",
-            },
-          },
-          {
-            id: "action-loop",
-            type: "actionContainerNode",
-            x: 480,
-            y: 180,
-            width: 340,
-            height: 240,
-            data: {
-              label: "Build & Verification Suite",
-              description: "Runs code checks and verification script before committing.",
-              actions: ["Format Code", "Lint Checks", "Run Unit Tests"],
-            },
-          },
-          {
-            id: "terminal-loop",
-            type: "terminalNode",
-            x: 900,
-            y: 200,
-            width: 320,
-            height: 190,
-            data: {
-              label: "Tauri Compilation Target",
-              command: "echo 'Build verified' && exit 0",
-              isRunning: false,
-              status: "idle",
-            },
-          },
-        ],
-        edges: [
-          {
-            id: "e-prompt-action-loop",
-            source: "prompt-loop",
-            sourceHandle: "output",
-            target: "action-loop",
-            targetHandle: "input",
-          },
-          {
-            id: "e-action-terminal-loop",
-            source: "action-loop",
-            sourceHandle: "output",
-            target: "terminal-loop",
-            targetHandle: "trigger",
-          },
-        ],
-      });
-    } else if (presetName === "Review Pipeline") {
-      set({
-        nodes: [
-          {
-            id: "prompt-review",
-            type: "promptNode",
-            x: 80,
-            y: 150,
-            width: 320,
-            height: 150,
-            data: {
-              label: "Agent Review Guidelines",
-              prompt: "Ensure the code adheres to clean architecture, has 90%+ test coverage and uses standard types.",
-            },
-          },
-          {
-            id: "action-review",
-            type: "actionContainerNode",
-            x: 480,
-            y: 120,
-            width: 340,
-            height: 240,
-            data: {
-              label: "Verification Checks",
-              description: "Linting, static analysis, and code quality controls.",
-              actions: ["Check clean architecture rules", "Verify types and constraints"],
-            },
-          },
-          {
-            id: "terminal-review",
-            type: "terminalNode",
-            x: 900,
-            y: 140,
-            width: 320,
-            height: 190,
-            data: {
-              label: "Static Analyzer Output",
-              command: "echo 'Static analysis complete' && exit 0",
-              isRunning: false,
-              status: "idle",
-            },
-          },
-        ],
-        edges: [
-          {
-            id: "e-prompt-action-review",
-            source: "prompt-review",
-            sourceHandle: "output",
-            target: "action-review",
-            targetHandle: "input",
-          },
-          {
-            id: "e-action-terminal-review",
-            source: "action-review",
-            sourceHandle: "output",
-            target: "terminal-review",
-            targetHandle: "trigger",
-          },
-        ],
-      });
-    }
-    endHistoryBatch();
   },
 
   runPipeline: async () => {
