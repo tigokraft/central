@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tauri::AppHandle;
 
 use lancedb::connection::Connection;
 use lancedb::query::{ExecutableQuery, QueryBase};
@@ -34,15 +35,16 @@ pub struct AimemFact {
     pub created_at: String,
 }
 
-// Ensure the directories exist
-fn ensure_dirs() -> (PathBuf, PathBuf) {
-    let base = Path::new(".central");
+// Ensure the directories exist, rooted under the active project rather than the
+// process's own cwd.
+fn ensure_dirs(project_root: &Path) -> (PathBuf, PathBuf) {
+    let base = project_root.join(".central");
     let memory_dir = base.join("memory");
     let vault_dir = base.join("vault");
-    
+
     let _ = fs::create_dir_all(&memory_dir);
     let _ = fs::create_dir_all(&vault_dir);
-    
+
     (memory_dir, vault_dir)
 }
 
@@ -51,14 +53,15 @@ fn generate_embedding(text: &str) -> Vec<f32> {
     vec![0.1; 128]
 }
 
-async fn get_lancedb_connection() -> Result<Connection, String> {
-    let base = Path::new(".central").join("lancedb");
+async fn get_lancedb_connection(project_root: &Path) -> Result<Connection, String> {
+    let base = project_root.join(".central").join("lancedb");
     lancedb::connect(base.to_str().unwrap()).execute().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn create_memory_record(record: MemoryRecord) -> Result<(), String> {
-    let (memory_dir, vault_dir) = ensure_dirs();
+pub async fn create_memory_record(record: MemoryRecord, app: AppHandle) -> Result<(), String> {
+    let project_root = crate::git_engine::resolve_repo_root(&app);
+    let (memory_dir, vault_dir) = ensure_dirs(&project_root);
     
     // 1. Write .aimem file
     let aimem_content = format!(
@@ -96,7 +99,7 @@ pub async fn create_memory_record(record: MemoryRecord) -> Result<(), String> {
     fs::write(&vault_path, vault_content).map_err(|e| e.to_string())?;
 
     // 3. Index to LanceDB (Implementation provided!)
-    let db = get_lancedb_connection().await?;
+    let db = get_lancedb_connection(&project_root).await?;
     let embedding = generate_embedding(&record.content);
     
     // Create arrow arrays
@@ -138,8 +141,9 @@ pub async fn create_memory_record(record: MemoryRecord) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn query_memory_graph(query: String) -> Result<Vec<SearchResult>, String> {
-    let db = get_lancedb_connection().await?;
+pub async fn query_memory_graph(query: String, app: AppHandle) -> Result<Vec<SearchResult>, String> {
+    let project_root = crate::git_engine::resolve_repo_root(&app);
+    let db = get_lancedb_connection(&project_root).await?;
     let table_name = "memory_records";
     
     let tables = db.table_names().execute().await.map_err(|e| e.to_string())?;
@@ -183,8 +187,9 @@ pub async fn query_memory_graph(query: String) -> Result<Vec<SearchResult>, Stri
 }
 
 #[tauri::command]
-pub async fn supersede_record(old_id: String, new_id: String) -> Result<(), String> {
-    let (memory_dir, _) = ensure_dirs();
+pub async fn supersede_record(old_id: String, new_id: String, app: AppHandle) -> Result<(), String> {
+    let project_root = crate::git_engine::resolve_repo_root(&app);
+    let (memory_dir, _) = ensure_dirs(&project_root);
     let aimem_path = memory_dir.join(format!("{}.aimem", old_id));
     
     if aimem_path.exists() {
@@ -202,12 +207,18 @@ pub async fn export_to_obsidian() -> Result<(), String> {
 /// Lists every `.aimem` record on disk (newest first) for the Terminal Node's
 /// "Attach .aimem Fact" context action.
 #[tauri::command]
-pub fn list_aimem_facts() -> Result<Vec<AimemFact>, String> {
-    let (memory_dir, _vault_dir) = ensure_dirs();
+pub fn list_aimem_facts(app: AppHandle) -> Result<Vec<AimemFact>, String> {
+    let project_root = crate::git_engine::resolve_repo_root(&app);
+    let (memory_dir, _vault_dir) = ensure_dirs(&project_root);
+    Ok(read_aimem_facts(&memory_dir))
+}
 
-    let entries = match fs::read_dir(&memory_dir) {
+// Pure and AppHandle-free so parsing can be unit tested against a scratch directory
+// directly, without needing to resolve a project root first.
+fn read_aimem_facts(memory_dir: &Path) -> Vec<AimemFact> {
+    let entries = match fs::read_dir(memory_dir) {
         Ok(entries) => entries,
-        Err(_) => return Ok(vec![]),
+        Err(_) => return vec![],
     };
 
     let mut facts: Vec<AimemFact> = entries
@@ -231,5 +242,56 @@ pub fn list_aimem_facts() -> Result<Vec<AimemFact>, String> {
         .collect();
 
     facts.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    Ok(facts)
+    facts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    // Isolated scratch directory standing in for a project root, so tests never touch
+    // the real repo's own `.central` directory.
+    fn test_project_root() -> PathBuf {
+        let seq = TEST_SEQ.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("central-memory-engine-test-{}-{}", std::process::id(), seq));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn ensure_dirs_roots_memory_and_vault_under_given_project_root() {
+        let project_root = test_project_root();
+
+        let (memory_dir, vault_dir) = ensure_dirs(&project_root);
+
+        assert_eq!(memory_dir, project_root.join(".central").join("memory"));
+        assert_eq!(vault_dir, project_root.join(".central").join("vault"));
+        assert!(memory_dir.is_dir());
+        assert!(vault_dir.is_dir());
+
+        let _ = fs::remove_dir_all(&project_root);
+    }
+
+    #[test]
+    fn list_aimem_facts_reads_from_the_given_project_root_not_cwd() {
+        let project_root = test_project_root();
+        let (memory_dir, _) = ensure_dirs(&project_root);
+        fs::write(
+            memory_dir.join("fact-1.aimem"),
+            "---\nid: fact-1\n---\n\nsome fact content",
+        )
+        .unwrap();
+
+        let facts = read_aimem_facts(&memory_dir);
+
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].id, "fact-1");
+        assert_eq!(facts[0].content, "some fact content");
+
+        let _ = fs::remove_dir_all(&project_root);
+    }
 }
