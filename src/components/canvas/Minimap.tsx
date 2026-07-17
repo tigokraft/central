@@ -103,7 +103,14 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
       className="absolute bottom-4 right-4 bg-slate-950/90 border border-slate-800 rounded-lg p-1.5 shadow-overlay overflow-hidden select-none z-40"
       style={{ width: mapWidth + 12, height: mapHeight + 12 }}
     >
-      <div className="relative w-full h-full bg-slate-900/60 rounded">
+      <div
+        ref={mapRef}
+        className="relative w-full h-full bg-slate-900/60 rounded cursor-crosshair"
+        onMouseDown={(e) => {
+          setIsDragging(true);
+          centerOnClientPoint(e.clientX, e.clientY);
+        }}
+      >
         {/* Render Miniature Nodes */}
         {nodes.map((node) => {
           const pos = toMapCoords(node.x, node.y);
