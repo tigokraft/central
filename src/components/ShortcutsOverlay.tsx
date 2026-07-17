@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Keyboard } from "lucide-react";
 import Modal from "./ui/Modal";
 
@@ -20,6 +21,14 @@ const SHORTCUTS: { keys: string; description: string }[] = [
 ];
 
 export default function ShortcutsOverlay({ onClose }: ShortcutsOverlayProps) {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
     <Modal onClose={onClose} width={360}>
       <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-800">
