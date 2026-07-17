@@ -1,78 +1,9 @@
 import { useCanvasStore, getHandlePosition } from "../../store/canvasStore";
-import { isRectVisible, type Bounds } from "../../lib/canvasGeometry";
+import { isRectVisible, getControlPoints, getBezierPath, type Bounds } from "../../lib/canvasGeometry";
 
 interface SVGEdgeLayerProps {
   // When provided, edges with neither endpoint node inside these bounds are skipped.
   viewBounds?: Bounds;
-}
-
-function getControlPoints(
-  x1: number,
-  y1: number,
-  handle1Id: string,
-  node1Type: string,
-  x2: number,
-  y2: number,
-  handle2Id: string,
-  node2Type: string
-) {
-  // Determine direction of handle 1
-  let dx1 = 0;
-  let dy1 = 0;
-  if (node1Type === "terminalNode") {
-    if (handle1Id === "done" || handle1Id === "bottom" || handle1Id === "output") {
-      dy1 = 60;
-    } else {
-      dy1 = -60;
-    }
-  } else {
-    if (handle1Id === "trigger" || handle1Id === "input" || handle1Id === "left") {
-      dx1 = -60;
-    } else {
-      dx1 = 60;
-    }
-  }
-
-  // Determine direction of handle 2
-  let dx2 = 0;
-  let dy2 = 0;
-  if (node2Type === "terminalNode") {
-    if (handle2Id === "done" || handle2Id === "bottom" || handle2Id === "output") {
-      dy2 = 60;
-    } else {
-      dy2 = -60;
-    }
-  } else {
-    if (handle2Id === "trigger" || handle2Id === "input" || handle2Id === "left") {
-      dx2 = -60;
-    } else {
-      dx2 = 60;
-    }
-  }
-
-  const dist = Math.hypot(x2 - x1, y2 - y1);
-  const strength = Math.min(dist * 0.4, 100);
-
-  return {
-    cp1x: x1 + (dx1 !== 0 ? Math.sign(dx1) * strength : 0),
-    cp1y: y1 + (dy1 !== 0 ? Math.sign(dy1) * strength : 0),
-    cp2x: x2 + (dx2 !== 0 ? Math.sign(dx2) * strength : 0),
-    cp2y: y2 + (dy2 !== 0 ? Math.sign(dy2) * strength : 0),
-  };
-}
-
-function getBezierPath(
-  x1: number,
-  y1: number,
-  handle1Id: string,
-  node1Type: string,
-  x2: number,
-  y2: number,
-  handle2Id: string,
-  node2Type: string
-) {
-  const { cp1x, cp1y, cp2x, cp2y } = getControlPoints(x1, y1, handle1Id, node1Type, x2, y2, handle2Id, node2Type);
-  return `M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`;
 }
 
 // Point at t=0.5 along the cable's cubic bezier, used to anchor the floating diff badge.
