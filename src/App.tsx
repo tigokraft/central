@@ -8,7 +8,6 @@ import { useCanvasStore } from "./store/canvasStore";
 
 export default function App() {
   const nodes = useCanvasStore((state) => state.nodes);
-  const loadPreset = useCanvasStore((state) => state.loadPreset);
   const [showMinimap, setShowMinimap] = useState(false);
 
   // Sync active processes with Sidebar monitor
@@ -25,7 +24,6 @@ export default function App() {
       <CustomTitleBar />
       <div className="flex flex-1 overflow-hidden min-h-0">
         <Sidebar
-          onLoadPreset={loadPreset}
           activeProcesses={activeProcesses}
         />
         <div className="flex-1 flex flex-col min-w-0 bg-slate-900 relative">
