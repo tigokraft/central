@@ -41,7 +41,7 @@ pub fn run() {
         .manage(git_engine::GitEngineState::default())
         .manage(mcp::McpManagerState::default())
         .manage(ProjectState::default())
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(target_os = "windows")]
             {
                 use tauri::Manager;

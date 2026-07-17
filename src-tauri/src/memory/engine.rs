@@ -48,7 +48,7 @@ fn ensure_dirs(project_root: &Path) -> (PathBuf, PathBuf) {
     (memory_dir, vault_dir)
 }
 
-fn generate_embedding(text: &str) -> Vec<f32> {
+fn generate_embedding(_text: &str) -> Vec<f32> {
     // Mock embedding generation (128 dims)
     vec![0.1; 128]
 }

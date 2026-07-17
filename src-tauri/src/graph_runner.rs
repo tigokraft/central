@@ -99,6 +99,7 @@ struct ExecutionContext {
 
 // Builds the petgraph DAG from the canvas nodes/edges and rejects cycles.
 // Pure and AppHandle-free so it can be exercised directly in unit tests.
+#[allow(clippy::type_complexity)]
 fn build_graph(
     nodes: &[GraphNodeInput],
     edges: &[GraphEdgeInput],
