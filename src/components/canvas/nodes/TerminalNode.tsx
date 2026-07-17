@@ -305,6 +305,44 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     termInstance.current?.clear();
   };
 
+  // Highlights every match while marking the current one, matching the terminal's emerald accent.
+  const SEARCH_DECORATIONS = {
+    matchBackground: "#78350f",
+    matchBorder: "#f59e0b",
+    matchOverviewRuler: "#f59e0b",
+    activeMatchBackground: "#065f46",
+    activeMatchBorder: "#10b981",
+    activeMatchColorOverviewRuler: "#10b981",
+  };
+
+  const handleSearchQueryChange = (value: string) => {
+    setSearchQuery(value);
+    if (!value) {
+      searchAddonRef.current?.clearDecorations();
+      setSearchResult(null);
+      return;
+    }
+    searchAddonRef.current?.findNext(value, { incremental: true, decorations: SEARCH_DECORATIONS });
+  };
+
+  const handleSearchNext = () => {
+    if (!searchQuery) return;
+    searchAddonRef.current?.findNext(searchQuery, { decorations: SEARCH_DECORATIONS });
+  };
+
+  const handleSearchPrevious = () => {
+    if (!searchQuery) return;
+    searchAddonRef.current?.findPrevious(searchQuery, { decorations: SEARCH_DECORATIONS });
+  };
+
+  const handleSearchClose = () => {
+    searchAddonRef.current?.clearDecorations();
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchResult(null);
+    termInstance.current?.focus();
+  };
+
   const handleToggleMinimize = () => {
     beginHistoryBatch();
     if (data.minimized) {
