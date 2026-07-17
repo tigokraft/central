@@ -57,6 +57,68 @@ export function getNodesBounds(nodes: Rect[]): Bounds | null {
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 }
 
+export interface AlignmentGuideResult {
+  // Canvas-space x/y positions to draw guide lines at.
+  vertical: number[];
+  horizontal: number[];
+  // Position correction to snap the dragged rect onto the nearest guide, if any.
+  snapDx: number;
+  snapDy: number;
+}
+
+// Figma-style alignment guides: compares the dragged rect's edges/center against every
+// other node's edges/center, and snaps + draws a guide line for the closest match per axis
+// within `threshold` canvas units.
+export function findAlignmentGuides(
+  dragged: Rect,
+  others: Rect[],
+  threshold = 6
+): AlignmentGuideResult {
+  const draggedXs = [dragged.x, dragged.x + dragged.width / 2, dragged.x + dragged.width];
+  const draggedYs = [dragged.y, dragged.y + dragged.height / 2, dragged.y + dragged.height];
+
+  let bestXDist = threshold;
+  let bestX: number | null = null;
+  let bestDx = 0;
+  let bestYDist = threshold;
+  let bestY: number | null = null;
+  let bestDy = 0;
+
+  for (const other of others) {
+    const otherXs = [other.x, other.x + other.width / 2, other.x + other.width];
+    const otherYs = [other.y, other.y + other.height / 2, other.y + other.height];
+
+    for (const dx of draggedXs) {
+      for (const ox of otherXs) {
+        const dist = Math.abs(dx - ox);
+        if (dist < bestXDist) {
+          bestXDist = dist;
+          bestX = ox;
+          bestDx = ox - dx;
+        }
+      }
+    }
+
+    for (const dy of draggedYs) {
+      for (const oy of otherYs) {
+        const dist = Math.abs(dy - oy);
+        if (dist < bestYDist) {
+          bestYDist = dist;
+          bestY = oy;
+          bestDy = oy - dy;
+        }
+      }
+    }
+  }
+
+  return {
+    vertical: bestX !== null ? [bestX] : [],
+    horizontal: bestY !== null ? [bestY] : [],
+    snapDx: bestDx,
+    snapDy: bestDy,
+  };
+}
+
 export interface FitViewportOptions {
   padding?: number;
   minZoom?: number;

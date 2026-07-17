@@ -1,6 +1,7 @@
 import { useRef, useEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../store/canvasStore";
+import { findAlignmentGuides } from "../../lib/canvasGeometry";
 
 interface CanvasNodeWrapperProps {
   node: CanvasNode;
@@ -18,6 +19,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
   const activeTool = useCanvasStore((state) => state.activeTool);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const setSelectedNodeIds = useCanvasStore((state) => state.setSelectedNodeIds);
+  const setDragGuides = useCanvasStore((state) => state.setDragGuides);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isSelected = selectedNodeIds.includes(node.id);
@@ -104,23 +106,42 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
 
       const zoom = useCanvasStore.getState().viewport.zoom;
 
-      const nextX = node.x + dx / zoom;
-      const nextY = node.y + dy / zoom;
+      const rawDx = dx / zoom;
+      const rawDy = dy / zoom;
+      const nextX = node.x + rawDx;
+      const nextY = node.y + rawDy;
 
-      updateNodePosition(node.id, nextX, nextY, { dx: dx / zoom, dy: dy / zoom });
+      // Figma-style alignment guides: snap live onto other nodes' edges/centers while
+      // dragging, rather than only correcting to the grid on release.
+      const others = useCanvasStore.getState().nodes.filter((n) => n.id !== node.id);
+      const guides = findAlignmentGuides(
+        { x: nextX, y: nextY, width: node.width, height: node.height },
+        others,
+        6 / zoom
+      );
+      const hasGuide = guides.vertical.length > 0 || guides.horizontal.length > 0;
+      const finalDx = rawDx + guides.snapDx;
+      const finalDy = rawDy + guides.snapDy;
+
+      updateNodePosition(node.id, node.x + finalDx, node.y + finalDy, { dx: finalDx, dy: finalDy });
+      setDragGuides(hasGuide ? { vertical: guides.vertical, horizontal: guides.horizontal } : null);
 
       if (last) {
-        // Snap the dragged node (and anything moving with it) to the nearest grid line on
-        // release, so a batch of cards dropped near each other lock into clean alignment.
-        const snapCorrectionX = Math.round(nextX / SNAP_SIZE) * SNAP_SIZE - nextX;
-        const snapCorrectionY = Math.round(nextY / SNAP_SIZE) * SNAP_SIZE - nextY;
+        // Snap to the nearest grid line on release — but only on the axis that didn't
+        // already snap to another node's edge, so aligning two cards doesn't get overridden
+        // by the grid a moment later.
+        const settledX = node.x + finalDx;
+        const settledY = node.y + finalDy;
+        const snapCorrectionX = guides.vertical.length > 0 ? 0 : Math.round(settledX / SNAP_SIZE) * SNAP_SIZE - settledX;
+        const snapCorrectionY = guides.horizontal.length > 0 ? 0 : Math.round(settledY / SNAP_SIZE) * SNAP_SIZE - settledY;
         if (snapCorrectionX !== 0 || snapCorrectionY !== 0) {
-          updateNodePosition(node.id, nextX + snapCorrectionX, nextY + snapCorrectionY, {
+          updateNodePosition(node.id, settledX + snapCorrectionX, settledY + snapCorrectionY, {
             dx: snapCorrectionX,
             dy: snapCorrectionY,
           });
         }
         reparentNode(node.id);
+        setDragGuides(null);
         endHistoryBatch();
       }
     },

@@ -65,6 +65,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const zoomToFit = useCanvasStore((state) => state.zoomToFit);
+  const dragGuides = useCanvasStore((state) => state.dragGuides);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const spacePressed = useRef(false);
@@ -566,6 +567,36 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
               />
             );
           })()}
+
+          {/* Figma-style alignment guide lines, shown while dragging a node near another */}
+          {dragGuides?.vertical.map((x) => (
+            <div
+              key={`v-${x}`}
+              style={{
+                position: "absolute",
+                left: x,
+                top: viewBounds.minY,
+                width: 1,
+                height: viewBounds.height,
+                pointerEvents: "none",
+              }}
+              className="bg-emerald-400 z-50"
+            />
+          ))}
+          {dragGuides?.horizontal.map((y) => (
+            <div
+              key={`h-${y}`}
+              style={{
+                position: "absolute",
+                left: viewBounds.minX,
+                top: y,
+                width: viewBounds.width,
+                height: 1,
+                pointerEvents: "none",
+              }}
+              className="bg-emerald-400 z-50"
+            />
+          ))}
         </div>
       </div>
 

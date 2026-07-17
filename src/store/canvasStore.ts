@@ -187,6 +187,10 @@ interface CanvasState {
   // Selection
   selectedNodeIds: string[];
   setSelectedNodeIds: (ids: string[]) => void;
+
+  // Figma-style alignment guide lines shown while dragging a node; null when not dragging.
+  dragGuides: { vertical: number[]; horizontal: number[] } | null;
+  setDragGuides: (guides: { vertical: number[]; horizontal: number[] } | null) => void;
 }
 
 export const useCanvasStore = create<CanvasState>()(
@@ -194,6 +198,9 @@ export const useCanvasStore = create<CanvasState>()(
     (set, get) => ({
   selectedNodeIds: [],
   setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids }),
+
+  dragGuides: null,
+  setDragGuides: (guides) => set({ dragGuides: guides }),
 
   viewport: { x: 0, y: 0, zoom: 1 },
   nodes: [
