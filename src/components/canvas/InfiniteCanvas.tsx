@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../store/canvasStore";
 import { getViewportBounds, isRectVisible } from "../../lib/canvasGeometry";
+import { viewportController, computeTransformStyle, computeGridStyle, type Viewport } from "../../lib/viewportController";
 import SVGEdgeLayer from "./SVGEdgeLayer";
 import CanvasNodeWrapper from "./CanvasNodeWrapper";
 import Minimap from "./Minimap";
@@ -50,14 +51,14 @@ interface CableHandoffPayload {
 const ALWAYS_MOUNTED_TYPES: CanvasNode["type"][] = ["terminalNode", "ephemeralActionNode"];
 
 // Generous canvas-space margin so nodes don't visibly pop in/out right at the viewport edge.
-const CULL_MARGIN = 400;
+// Culling bounds now come from a throttled live-viewport snapshot (~120ms cadence, see
+// viewportController) rather than every render, so the margin also has to absorb however far
+// a fast pan/momentum fling can travel within one throttle window.
+const CULL_MARGIN = 640;
 
 export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const nodes = useCanvasStore((state) => state.nodes);
-  const viewport = useCanvasStore((state) => state.viewport);
   const activeTool = useCanvasStore((state) => state.activeTool);
-  const panViewport = useCanvasStore((state) => state.panViewport);
-  const zoomViewport = useCanvasStore((state) => state.zoomViewport);
   const setActiveTool = useCanvasStore((state) => state.setActiveTool);
   const addNode = useCanvasStore((state) => state.addNode);
   const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
@@ -68,9 +69,33 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const dragGuides = useCanvasStore((state) => state.dragGuides);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const transformElRef = useRef<HTMLDivElement>(null);
+  const gridElRef = useRef<HTMLDivElement>(null);
   const spacePressed = useRef(false);
   const [isSpaceActive, setIsSpaceActive] = useState(false);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+
+  // Throttled mirror of the live viewport (see viewportController), used only for viewport
+  // culling bounds so offscreen nodes don't visibly pop in/out during a pan — everything else
+  // that needs the viewport reads viewportController.getViewport() directly or writes the DOM
+  // imperatively, so this is the only viewport-driven re-render source left in this component.
+  const [liveViewport, setLiveViewport] = useState<Viewport>(() => viewportController.getViewport());
+
+  useEffect(() => viewportController.subscribeLive(setLiveViewport), []);
+
+  useEffect(() => {
+    viewportController.attachDom(transformElRef.current, gridElRef.current);
+    return () => viewportController.detachDom();
+  }, []);
+
+  // Computed once for the very first paint (before attachDom's effect has run) and never
+  // recomputed afterwards — the identical value on every re-render means React's reconciler
+  // never touches these style properties again, leaving viewportController's direct per-frame
+  // DOM writes as their sole owner. Deriving these from `liveViewport` (reactive, throttled)
+  // instead would make React re-stamp a stale value over the controller's live writes on
+  // every unrelated re-render (node update, selection change, etc.).
+  const initialTransformStyle = useRef(computeTransformStyle(viewportController.getViewport())).current;
+  const initialGridStyle = useRef(computeGridStyle(viewportController.getViewport())).current;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; canvasX: number; canvasY: number; type: "canvas" | "node"; nodeId?: string } | null>(null);
 
   // Frame creation state
@@ -176,7 +201,8 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         const mouseY = e.clientY - rect.top;
         const clampedDelta = Math.min(Math.max(e.deltaY, -80), 80);
         const zoomFactor = 1 - clampedDelta * 0.0012;
-        zoomViewport(zoomFactor, mouseX, mouseY);
+        // Direct, 1:1 controller write — no store round-trip, no React re-render per tick.
+        viewportController.zoomBy(zoomFactor, mouseX, mouseY);
       } else {
         let dx = e.deltaX;
         let dy = e.deltaY;
@@ -185,7 +211,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
           dy = 0;
         }
         // Scale delta for smoother native panning without clamping jumps
-        panViewport(-dx * 0.5, -dy * 0.5);
+        viewportController.panBy(-dx * 0.5, -dy * 0.5);
       }
     };
 
@@ -193,7 +219,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     return () => {
       container.removeEventListener("wheel", handleWheelNative);
     };
-  }, [panViewport, zoomViewport]);
+  }, []);
 
   // Context Menu and Clicks closing
   useEffect(() => {
@@ -210,7 +236,8 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
 
     const handlePointerTrack = (e: PointerEvent) => {
       const rect = container.getBoundingClientRect();
-      const { viewport, setPointerCanvasPosition } = useCanvasStore.getState();
+      const viewport = viewportController.getViewport();
+      const { setPointerCanvasPosition } = useCanvasStore.getState();
       const canvasX = (e.clientX - rect.left - viewport.x) / viewport.zoom;
       const canvasY = (e.clientY - rect.top - viewport.y) / viewport.zoom;
       setPointerCanvasPosition(canvasX, canvasY);
@@ -300,6 +327,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     const clientX = e.clientX - rect.left;
     const clientY = e.clientY - rect.top;
 
+    const viewport = viewportController.getViewport();
     const canvasX = (clientX - viewport.x) / viewport.zoom;
     const canvasY = (clientY - viewport.y) / viewport.zoom;
 
@@ -346,7 +374,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
       const dy = e.clientY - middlePanRef.current.lastY;
       middlePanRef.current.lastX = e.clientX;
       middlePanRef.current.lastY = e.clientY;
-      panViewport(dx, dy);
+      viewportController.panBy(dx, dy);
       return;
     }
 
@@ -356,6 +384,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     const clientX = e.clientX - rect.left;
     const clientY = e.clientY - rect.top;
 
+    const viewport = viewportController.getViewport();
     const canvasX = (clientX - viewport.x) / viewport.zoom;
     const canvasY = (clientY - viewport.y) / viewport.zoom;
 
@@ -413,6 +442,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     const rect = container.getBoundingClientRect();
     const clientX = e.clientX - rect.left;
     const clientY = e.clientY - rect.top;
+    const viewport = viewportController.getViewport();
     const canvasX = (clientX - viewport.x) / viewport.zoom;
     const canvasY = (clientY - viewport.y) / viewport.zoom;
 
@@ -466,19 +496,13 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   // nodes are exempt (see ALWAYS_MOUNTED_TYPES) since unmounting them would tear down their
   // live PTY/process lifecycle.
   const viewBounds = useMemo(
-    () => getViewportBounds(viewport, dimensions.width, dimensions.height, CULL_MARGIN),
-    [viewport, dimensions.width, dimensions.height]
+    () => getViewportBounds(liveViewport, dimensions.width, dimensions.height, CULL_MARGIN),
+    [liveViewport, dimensions.width, dimensions.height]
   );
   const visibleNodes = useMemo(
     () => nodes.filter((n) => ALWAYS_MOUNTED_TYPES.includes(n.type) || isRectVisible(n, viewBounds)),
     [nodes, viewBounds]
   );
-
-  // Figma Dot Grid Pattern sizing/alignment calculation
-  const gridGap = 16;
-  const scaledGap = gridGap * viewport.zoom;
-  const gridPosX = viewport.x % scaledGap;
-  const gridPosY = viewport.y % scaledGap;
 
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-slate-900 relative h-full">
@@ -494,22 +518,26 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         onContextMenu={handleContextMenu}
         className={`w-full h-full relative overflow-hidden select-none outline-none ${cursorClass}`}
       >
-        {/* Figma Infinite Dot Grid Background */}
+        {/* Figma Infinite Dot Grid Background — style written directly by viewportController
+            every animation frame (see attachDom), not via React state, so panning/zooming
+            doesn't force a re-render. Initial inline style avoids a flash before mount. */}
         <div
+          ref={gridElRef}
           style={{
             position: "absolute",
             inset: 0,
             backgroundImage: "radial-gradient(circle, #334155 1.2px, transparent 1.2px)",
-            backgroundSize: `${scaledGap}px ${scaledGap}px`,
-            backgroundPosition: `${gridPosX}px ${gridPosY}px`,
             pointerEvents: "none",
+            ...initialGridStyle,
           }}
         />
 
-        {/* Viewport Zoom & Pan Matrix Scale */}
+        {/* Viewport Zoom & Pan Matrix Scale — transform written directly by
+            viewportController every animation frame instead of via React re-render. */}
         <div
+          ref={transformElRef}
           style={{
-            transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+            transform: initialTransformStyle,
             transformOrigin: "0 0",
           }}
           className="absolute inset-0"
