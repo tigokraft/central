@@ -6,7 +6,11 @@ use crate::graph_runner::{emit_event, run_shell_command_raw, NodeEventPayload};
 // node-start/node-streaming/node-success/node-fail event names the canvas already listens
 // for, so a one-off ephemeral node lights up exactly like a graph node without needing one.
 #[tauri::command]
-pub async fn run_ephemeral_command(node_id: String, command: String, app: AppHandle) -> Result<(), String> {
+pub async fn run_ephemeral_command(
+    node_id: String,
+    command: String,
+    app: AppHandle,
+) -> Result<(), String> {
     emit_event(
         &app,
         "node-start",
