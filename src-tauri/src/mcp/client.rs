@@ -67,13 +67,27 @@ impl McpClient {
         cmd.stderr(Stdio::piped());
         cmd.kill_on_drop(true);
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn MCP server '{} {}': {}", command, args.join(" "), e))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            format!(
+                "Failed to spawn MCP server '{} {}': {}",
+                command,
+                args.join(" "),
+                e
+            )
+        })?;
 
-        let stdin = child.stdin.take().ok_or("Failed to capture MCP server stdin")?;
-        let stdout = child.stdout.take().ok_or("Failed to capture MCP server stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to capture MCP server stderr")?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or("Failed to capture MCP server stdin")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Failed to capture MCP server stdout")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("Failed to capture MCP server stderr")?;
 
         let pending: PendingMap = Arc::new(TokioMutex::new(HashMap::new()));
 
@@ -89,7 +103,9 @@ impl McpClient {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let Ok(value) = serde_json::from_str::<Value>(trimmed) else { continue };
+                let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+                    continue;
+                };
 
                 if let Some(id) = value.get("id").and_then(|v| v.as_i64()) {
                     let sender = { reader_pending.lock().await.remove(&id) };
@@ -149,7 +165,10 @@ impl McpClient {
             };
             let _ = exit_app.emit(
                 "mcp-server-exit",
-                McpServerExitPayload { server_id: exit_server_id, message: Some(message) },
+                McpServerExitPayload {
+                    server_id: exit_server_id,
+                    message: Some(message),
+                },
             );
         });
 
@@ -181,7 +200,10 @@ impl McpClient {
         let mut line = serde_json::to_string(value).map_err(|e| e.to_string())?;
         line.push('\n');
         let mut stdin = self.stdin.lock().await;
-        stdin.write_all(line.as_bytes()).await.map_err(|e| e.to_string())?;
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
         stdin.flush().await.map_err(|e| e.to_string())
     }
 
@@ -194,10 +216,17 @@ impl McpClient {
             "clientInfo": { "name": "central-canvas-architect", "version": "0.1.0" },
         });
         let result = self.send_request("initialize", params).await?;
-        self.send_notification("notifications/initialized", json!({})).await?;
+        self.send_notification("notifications/initialized", json!({}))
+            .await?;
 
-        let name = result.pointer("/serverInfo/name").and_then(|v| v.as_str()).map(str::to_string);
-        let version = result.pointer("/serverInfo/version").and_then(|v| v.as_str()).map(str::to_string);
+        let name = result
+            .pointer("/serverInfo/name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let version = result
+            .pointer("/serverInfo/version")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         Ok((name, version))
     }
 

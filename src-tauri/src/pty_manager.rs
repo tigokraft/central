@@ -1,11 +1,11 @@
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use serde::Serialize;
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::io::{Read, Write};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize, MasterPty, Child};
-use serde::Serialize;
-use tauri::{AppHandle, Emitter, State, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // Every spawned PTY gets a unique instance id, even when it reuses a node_id that a
 // previous (now-killed) session also used. This lets a stale reader thread recognize that
@@ -174,7 +174,9 @@ pub fn write_pty(
 
     if let Some(writer_lock) = proc {
         let mut writer = writer_lock.lock().unwrap();
-        writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        writer
+            .write_all(data.as_bytes())
+            .map_err(|e| e.to_string())?;
         writer.flush().map_err(|e| e.to_string())?;
         Ok(())
     } else {
@@ -205,10 +207,7 @@ pub fn resize_pty(
 }
 
 #[tauri::command]
-pub fn destroy_pty(
-    node_id: String,
-    state: State<'_, PtyManager>,
-) -> Result<(), String> {
+pub fn destroy_pty(node_id: String, state: State<'_, PtyManager>) -> Result<(), String> {
     let proc = {
         let mut processes = state.processes.lock().unwrap();
         processes.remove(&node_id)
