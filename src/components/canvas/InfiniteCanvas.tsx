@@ -198,6 +198,10 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
         // Cmd/Ctrl+K opens the command palette
         e.preventDefault();
         setIsPaletteOpen(true);
+      } else if (e.key === "?") {
+        // ? opens the shortcuts overlay
+        e.preventDefault();
+        setIsShortcutsOpen(true);
       } else if (e.key.toLowerCase() === "v") {
         setActiveTool("select");
       } else if (e.key.toLowerCase() === "h") {

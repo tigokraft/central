@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tauri-dev",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["pnpm", "tauri", "dev"],
+      "port": 1420
+    }
+  ]
+}
