@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::io::{Read, Write};
@@ -35,6 +36,13 @@ struct PtyExitPayload {
     node_id: String,
 }
 
+// Pure and AppHandle-free so the cwd wiring can be unit tested without spawning a real PTY.
+fn build_pty_command(shell_name: &str, cwd: &Path) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(shell_name);
+    cmd.cwd(cwd);
+    cmd
+}
+
 #[tauri::command]
 pub fn spawn_pty(
     node_id: String,
@@ -62,15 +70,8 @@ pub fn spawn_pty(
         }
     });
 
-    let mut cmd = CommandBuilder::new(&shell_name);
-
-    // Set CWD to the project root (up from src-tauri if applicable)
-    if let Ok(mut current) = std::env::current_dir() {
-        if current.ends_with("src-tauri") {
-            current.pop();
-        }
-        cmd.cwd(current);
-    }
+    let cwd = crate::git_engine::resolve_repo_root(&app_handle);
+    let cmd = build_pty_command(&shell_name, &cwd);
 
     // 3. Open PTY pair
     let pty_system = native_pty_system();
@@ -219,5 +220,17 @@ pub fn destroy_pty(
         Ok(())
     } else {
         Err(format!("No active PTY session for node ID: {}", node_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_pty_command_sets_cwd_to_given_path() {
+        let cwd = Path::new("/tmp/some-project");
+        let cmd = build_pty_command("bash", cwd);
+        assert_eq!(cmd.get_cwd().map(|s| s.as_os_str()), Some(cwd.as_os_str()));
     }
 }
