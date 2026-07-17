@@ -147,6 +147,9 @@ interface CanvasState {
   viewport: Viewport;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  // Id of the project currently persisted to disk; null until a project has been opened
+  // (e.g. still on the Home view). Drives the autosave subscribe below.
+  activeProjectId: string | null;
   activeTool: "select" | "hand" | "frame";
   draggingEdge: {
     sourceId: string;
@@ -189,6 +192,12 @@ interface CanvasState {
   startDraggingEdge: (sourceId: string, sourceHandle: string, x: number, y: number) => void;
   updateDraggingEdge: (x: number, y: number) => void;
   stopDraggingEdge: () => void;
+
+  // Persistence
+  hydrateFromProject: (
+    projectId: string,
+    graph: { nodes: CanvasNode[]; edges: CanvasEdge[]; viewport: Viewport }
+  ) => void;
 
   // Presets & Execution
   loadPreset: (presetName: string) => void;
@@ -285,6 +294,7 @@ export const useCanvasStore = create<CanvasState>()(
       targetHandle: "trigger",
     },
   ],
+  activeProjectId: null,
   activeTool: "select",
   draggingEdge: null,
   pointerCanvasPosition: null,
@@ -622,6 +632,30 @@ export const useCanvasStore = create<CanvasState>()(
 
   stopDraggingEdge: () => set({ draggingEdge: null }),
 
+  // Replaces the entire canvas with a persisted project's graph (called by Phase 3c's
+  // openProject flow). Resets all transient/derived state so nothing from the previously
+  // open project (selection, in-flight drags, execution status) leaks into the new one, and
+  // clears undo history since past states referred to the old project's nodes/edges.
+  hydrateFromProject: (projectId, graph) => {
+    viewportController.setInstant(graph.viewport);
+    set({
+      activeProjectId: projectId,
+      nodes: graph.nodes,
+      edges: graph.edges,
+      viewport: graph.viewport,
+      selectedNodeIds: [],
+      draggingEdge: null,
+      pointerCanvasPosition: null,
+      edgeExecState: {},
+      cableDiffStats: {},
+      isPipelineRunning: false,
+      ephemeralArchive: [],
+      activeTool: "select",
+      dragGuides: null,
+    });
+    useCanvasStore.temporal.getState().clear();
+  },
+
   loadPreset: (presetName) => {
     beginHistoryBatch();
     if (presetName === "Code Loop") {
@@ -815,6 +849,36 @@ export const useCanvasStore = create<CanvasState>()(
 viewportController.init(useCanvasStore.getState().viewport, (vp) =>
   useCanvasStore.setState({ viewport: vp })
 );
+
+const AUTOSAVE_DEBOUNCE_MS = 2000;
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function persistActiveProject() {
+  const { activeProjectId, nodes, edges, viewport } = useCanvasStore.getState();
+  if (!activeProjectId) return;
+  try {
+    await invoke("save_project_graph", {
+      projectId: activeProjectId,
+      graph: { nodes, edges, viewport },
+    });
+  } catch (err) {
+    console.error("Failed to autosave project:", err);
+  }
+}
+
+// Debounced autosave: any nodes/edges mutation while a project is open schedules a write to
+// that project's graph.json ~2s after the last change, coalescing bursts (drags, streaming
+// node updates) into a single save.
+useCanvasStore.subscribe((state, prevState) => {
+  if (!state.activeProjectId) return;
+  if (state.nodes === prevState.nodes && state.edges === prevState.edges) return;
+
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null;
+    void persistActiveProject();
+  }, AUTOSAVE_DEBOUNCE_MS);
+});
 
 // zundo's automatic per-set() tracking is deliberately disabled here (see below) — every
 // action in this store rebuilds `nodes`/`edges` via .map()/spread even when nothing

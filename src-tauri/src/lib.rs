@@ -2,6 +2,7 @@ mod ephemeral;
 mod git_engine;
 mod graph_runner;
 mod mcp;
+mod project;
 pub mod memory;
 mod pty_manager;
 
@@ -34,6 +35,7 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(pty_manager::PtyManager::default())
         .manage(graph_runner::GraphRunnerState::default())
         .manage(git_engine::GitEngineState::default())
@@ -72,6 +74,10 @@ pub fn run() {
             mcp::commands::mcp_list_tools,
             mcp::commands::mcp_call_tool,
             mcp::commands::mcp_list_servers,
+            project::list_projects,
+            project::create_project,
+            project::save_project_graph,
+            project::load_project_graph,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
