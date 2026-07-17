@@ -446,6 +446,57 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         </div>
       </div>
 
+      {!data.minimized && searchOpen && (
+        <div className="bg-slate-950/80 px-2 py-1 flex items-center gap-1.5 border-b border-slate-800/80 shrink-0">
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => handleSearchQueryChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (e.shiftKey) handleSearchPrevious();
+                else handleSearchNext();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                handleSearchClose();
+              }
+            }}
+            placeholder="Search terminal..."
+            className="flex-1 min-w-0 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-[10px] font-mono text-emerald-300 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500/50"
+          />
+          <span className="text-[8px] font-mono text-slate-500 shrink-0 tabular-nums">
+            {searchQuery
+              ? searchResult && searchResult.resultCount > 0
+                ? `${searchResult.resultIndex + 1}/${searchResult.resultCount}`
+                : "0/0"
+              : ""}
+          </span>
+          <button
+            onClick={handleSearchPrevious}
+            title="Previous match (Shift+Enter)"
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+          >
+            <ChevronUp size={10} />
+          </button>
+          <button
+            onClick={handleSearchNext}
+            title="Next match (Enter)"
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+          >
+            <ChevronDown size={10} />
+          </button>
+          <button
+            onClick={handleSearchClose}
+            title="Close (Esc)"
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-red-400 transition-colors cursor-pointer"
+          >
+            <X size={10} />
+          </button>
+        </div>
+      )}
+
       {!data.minimized && (
         <>
           {/* Context Injection HUD */}
