@@ -3,6 +3,7 @@ mod graph_runner;
 mod git_engine;
 mod ephemeral;
 mod mcp;
+mod project;
 pub mod memory;
 
 use std::path::PathBuf;
@@ -70,6 +71,10 @@ pub fn run() {
             mcp::commands::mcp_list_tools,
             mcp::commands::mcp_call_tool,
             mcp::commands::mcp_list_servers,
+            project::list_projects,
+            project::create_project,
+            project::save_project_graph,
+            project::load_project_graph,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
