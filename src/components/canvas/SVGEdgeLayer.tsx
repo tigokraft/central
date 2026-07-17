@@ -1,4 +1,10 @@
 import { useCanvasStore, getHandlePosition } from "../../store/canvasStore";
+import { isRectVisible, type Bounds } from "../../lib/canvasGeometry";
+
+interface SVGEdgeLayerProps {
+  // When provided, edges with neither endpoint node inside these bounds are skipped.
+  viewBounds?: Bounds;
+}
 
 function getControlPoints(
   x1: number,
@@ -87,9 +93,9 @@ function getBezierMidpoint(
   };
 }
 
-export default function SVGEdgeLayer() {
+export default function SVGEdgeLayer({ viewBounds }: SVGEdgeLayerProps) {
   const nodes = useCanvasStore((state) => state.nodes);
-  const edges = useCanvasStore((state) => state.edges);
+  const allEdges = useCanvasStore((state) => state.edges);
   const draggingEdge = useCanvasStore((state) => state.draggingEdge);
   const deleteEdge = useCanvasStore((state) => state.deleteEdge);
   const edgeExecState = useCanvasStore((state) => state.edgeExecState);
@@ -133,12 +139,16 @@ export default function SVGEdgeLayer() {
         </marker>
       </defs>
 
-      {/* Render existing connections */}
-      {edges.map((edge) => {
+      {/* Render existing connections (skip ones fully outside the visible viewport) */}
+      {allEdges.map((edge) => {
         const sourceNode = nodes.find((n) => n.id === edge.source);
         const targetNode = nodes.find((n) => n.id === edge.target);
 
         if (!sourceNode || !targetNode) return null;
+
+        if (viewBounds && !isRectVisible(sourceNode, viewBounds) && !isRectVisible(targetNode, viewBounds)) {
+          return null;
+        }
 
         const start = getHandlePosition(sourceNode, edge.sourceHandle);
         const end = getHandlePosition(targetNode, edge.targetHandle);

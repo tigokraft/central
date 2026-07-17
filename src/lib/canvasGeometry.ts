@@ -14,6 +14,31 @@ export interface Rect {
   height: number;
 }
 
+// The visible canvas-space rectangle for a given viewport + container size, used to cull
+// offscreen nodes/edges before rendering. `margin` extends the rect outward (in canvas
+// units) so items just past the edge don't visibly pop in/out during a small pan.
+export function getViewportBounds(
+  viewport: { x: number; y: number; zoom: number },
+  containerWidth: number,
+  containerHeight: number,
+  margin = 0
+): Bounds {
+  const minX = -viewport.x / viewport.zoom - margin;
+  const minY = -viewport.y / viewport.zoom - margin;
+  const maxX = (containerWidth - viewport.x) / viewport.zoom + margin;
+  const maxY = (containerHeight - viewport.y) / viewport.zoom + margin;
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+export function isRectVisible(rect: Rect, viewBounds: Bounds): boolean {
+  return (
+    rect.x < viewBounds.maxX &&
+    rect.x + rect.width > viewBounds.minX &&
+    rect.y < viewBounds.maxY &&
+    rect.y + rect.height > viewBounds.minY
+  );
+}
+
 export function getNodesBounds(nodes: Rect[]): Bounds | null {
   if (nodes.length === 0) return null;
 

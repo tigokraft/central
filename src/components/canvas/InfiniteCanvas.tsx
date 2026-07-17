@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Terminal,
@@ -8,6 +8,7 @@ import {
   Frame as FrameIcon
 } from "lucide-react";
 import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
+import { getViewportBounds, isRectVisible } from "../../lib/canvasGeometry";
 import SVGEdgeLayer from "./SVGEdgeLayer";
 import CanvasNodeWrapper from "./CanvasNodeWrapper";
 import Minimap from "./Minimap";
@@ -42,6 +43,14 @@ interface CableHandoffPayload {
   deletions: number;
   filesChanged: number;
 }
+
+// Node types with a live backend process/listener tied to mount (PTY sessions, ephemeral
+// run event subscriptions) — these must never be culled while offscreen, or panning them
+// out of view would kill the running process.
+const ALWAYS_MOUNTED_TYPES: CanvasNode["type"][] = ["terminalNode", "ephemeralActionNode"];
+
+// Generous canvas-space margin so nodes don't visibly pop in/out right at the viewport edge.
+const CULL_MARGIN = 400;
 
 export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const nodes = useCanvasStore((state) => state.nodes);
@@ -444,6 +453,18 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     }
   };
 
+  // Viewport culling: skip rendering nodes well outside the visible area. Terminal/ephemeral
+  // nodes are exempt (see ALWAYS_MOUNTED_TYPES) since unmounting them would tear down their
+  // live PTY/process lifecycle.
+  const viewBounds = useMemo(
+    () => getViewportBounds(viewport, dimensions.width, dimensions.height, CULL_MARGIN),
+    [viewport, dimensions.width, dimensions.height]
+  );
+  const visibleNodes = useMemo(
+    () => nodes.filter((n) => ALWAYS_MOUNTED_TYPES.includes(n.type) || isRectVisible(n, viewBounds)),
+    [nodes, viewBounds]
+  );
+
   // Figma Dot Grid Pattern sizing/alignment calculation
   const gridGap = 16;
   const scaledGap = gridGap * viewport.zoom;
@@ -485,10 +506,10 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
           className="absolute inset-0"
         >
           {/* Custom SVG Edge Layer */}
-          <SVGEdgeLayer />
+          <SVGEdgeLayer viewBounds={viewBounds} />
 
           {/* Node Render Loop */}
-          {nodes.map((node) => (
+          {visibleNodes.map((node) => (
             <CanvasNodeWrapper key={node.id} node={node}>
               {renderNode(node)}
             </CanvasNodeWrapper>
