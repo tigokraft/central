@@ -98,13 +98,6 @@ export default function SVGEdgeLayer() {
   return (
     <svg className="absolute inset-0 pointer-events-none w-full h-full overflow-visible z-0">
       <defs>
-        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-          <feGaussianBlur stdDeviation="3" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
         <marker
           id="arrow"
           viewBox="0 0 10 10"
@@ -114,10 +107,10 @@ export default function SVGEdgeLayer() {
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#34d399" />
+          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="var(--color-emerald-500)" />
         </marker>
         <marker
-          id="arrow-pink"
+          id="arrow-running"
           viewBox="0 0 10 10"
           refX="6"
           refY="5"
@@ -125,10 +118,10 @@ export default function SVGEdgeLayer() {
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#f472b6" />
+          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="var(--color-running)" />
         </marker>
         <marker
-          id="arrow-cyan"
+          id="arrow-error"
           viewBox="0 0 10 10"
           refX="6"
           refY="5"
@@ -136,18 +129,7 @@ export default function SVGEdgeLayer() {
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#22d3ee" />
-        </marker>
-        <marker
-          id="arrow-red"
-          viewBox="0 0 10 10"
-          refX="6"
-          refY="5"
-          markerWidth="6"
-          markerHeight="6"
-          orient="auto-start-reverse"
-        >
-          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="#ef4444" />
+          <path d="M 0 1.5 L 8 5 L 0 8.5 Z" fill="var(--color-error)" />
         </marker>
       </defs>
 
@@ -172,23 +154,22 @@ export default function SVGEdgeLayer() {
           targetNode.type
         );
 
-        const isPink = sourceNode.type === "memoryGraphNote" || targetNode.type === "memoryGraphNote";
-        let strokeColor = isPink ? "#f472b6" : "#34d399";
-        let markerUrl = isPink ? "url(#arrow-pink)" : "url(#arrow)";
+        let strokeColor = "var(--color-emerald-500)";
+        let markerUrl = "url(#arrow)";
         let dashClass = "animate-dash";
 
         const execState = edgeExecState[edge.id] ?? "idle";
         if (execState === "streaming") {
-          strokeColor = "#22d3ee";
-          markerUrl = "url(#arrow-cyan)";
+          strokeColor = "var(--color-running)";
+          markerUrl = "url(#arrow-running)";
           dashClass = "animate-dash-fast";
         } else if (execState === "success") {
-          strokeColor = "#34d399";
+          strokeColor = "var(--color-emerald-500)";
           markerUrl = "url(#arrow)";
           dashClass = "";
         } else if (execState === "fail") {
-          strokeColor = "#ef4444";
-          markerUrl = "url(#arrow-red)";
+          strokeColor = "var(--color-error)";
+          markerUrl = "url(#arrow-error)";
           dashClass = "animate-dash-fast";
         }
 
@@ -217,17 +198,16 @@ export default function SVGEdgeLayer() {
             <path
               d={d}
               fill="none"
-              stroke="#0f172a"
+              stroke="var(--color-slate-950)"
               strokeWidth={4}
             />
-            {/* Active Glowing Cable */}
+            {/* Cable */}
             <path
               d={d}
               fill="none"
               stroke={strokeColor}
               strokeWidth={2}
               className={dashClass}
-              filter="url(#glow)"
               markerEnd={markerUrl}
             />
             {/* Floating Git Diff Badge: agent hand-off stats between Coder and Reviewer nodes */}
@@ -278,7 +258,7 @@ export default function SVGEdgeLayer() {
             <path
               d={d}
               fill="none"
-              stroke="#10b981"
+              stroke="var(--color-emerald-500)"
               strokeWidth={1.5}
               strokeDasharray="4,4"
               className="opacity-70"
@@ -287,7 +267,7 @@ export default function SVGEdgeLayer() {
               cx={end.x}
               cy={end.y}
               r={4}
-              fill="#10b981"
+              fill="var(--color-emerald-500)"
               className="animate-ping"
             />
           </g>
