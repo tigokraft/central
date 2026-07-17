@@ -137,7 +137,7 @@ export function resolveMovingIds(nodesToMove: string[], allNodes: CanvasNode[]):
   return moving;
 }
 
-interface Viewport {
+export interface Viewport {
   x: number;
   y: number;
   zoom: number;
