@@ -308,7 +308,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   }
 
   return (
-    <div className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-lg shadow-2xl overflow-hidden flex flex-col transition-all hover:border-emerald-500/50 select-none">
+    <div className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-lg shadow-panel overflow-hidden flex flex-col transition-colors hover:border-emerald-500/50 select-none">
       {/* Sockets - Top and Bottom handles for TerminalNode */}
       <Port
         nodeId={id}

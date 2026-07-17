@@ -53,7 +53,7 @@ export default function ActionContainerNode({ node }: ActionContainerNodeProps) 
   };
 
   return (
-    <div className="relative w-full h-full bg-slate-900/70 backdrop-blur-md border border-slate-800 rounded-xl shadow-2xl overflow-hidden p-4 flex flex-col transition-all hover:border-emerald-500/40 select-none">
+    <div className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-xl shadow-panel overflow-hidden p-4 flex flex-col transition-colors hover:border-emerald-500/40 select-none">
       {/* Sockets */}
       <Port
         nodeId={id}

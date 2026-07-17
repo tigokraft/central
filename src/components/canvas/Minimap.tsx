@@ -76,7 +76,7 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
 
   return (
     <div
-      className="absolute bottom-4 right-4 bg-slate-950/90 border border-slate-800 rounded-lg p-1.5 shadow-2xl overflow-hidden select-none z-40"
+      className="absolute bottom-4 right-4 bg-slate-950/90 border border-slate-800 rounded-lg p-1.5 shadow-overlay overflow-hidden select-none z-40"
       style={{ width: mapWidth + 12, height: mapHeight + 12 }}
     >
       <div className="relative w-full h-full bg-slate-900/60 rounded">

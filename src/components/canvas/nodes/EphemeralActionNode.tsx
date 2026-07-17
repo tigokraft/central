@@ -104,7 +104,7 @@ export default function EphemeralActionNode({ node }: EphemeralActionNodeProps) 
 
   return (
     <div
-      className={`relative w-full h-full bg-slate-900 border rounded-lg shadow-2xl overflow-hidden p-2.5 flex flex-col gap-1 select-none transition-opacity duration-500 ${
+      className={`relative w-full h-full bg-slate-900 border rounded-lg shadow-panel overflow-hidden p-2.5 flex flex-col gap-1 select-none transition-opacity duration-500 ${
         isError ? "border-red-500/50" : isSuccess ? "border-emerald-500/40" : "border-amber-500/40"
       } ${isArchiving ? "opacity-30" : "opacity-100"}`}
     >

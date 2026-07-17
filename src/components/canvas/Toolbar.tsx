@@ -81,7 +81,7 @@ export default function Toolbar() {
   };
 
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-950/90 backdrop-blur-md border border-slate-800 rounded-xl px-4 py-2 flex items-center gap-6 shadow-2xl z-30 select-none">
+    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-950/90 backdrop-blur-md border border-slate-800 rounded-xl px-4 py-2 flex items-center gap-6 shadow-overlay z-30 select-none">
       {/* Tools */}
       <div className="flex items-center gap-1">
         <button

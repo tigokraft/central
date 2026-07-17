@@ -20,7 +20,7 @@ export default function PromptNode({ node }: PromptNodeProps) {
   };
 
   return (
-    <div className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-lg shadow-2xl overflow-hidden p-3 flex flex-col transition-all hover:border-emerald-500/50 select-none">
+    <div className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-lg shadow-panel overflow-hidden p-3 flex flex-col transition-colors hover:border-emerald-500/50 select-none">
       {/* Sockets - Left input (trigger) and Right output (output) */}
       <Port
         nodeId={id}
