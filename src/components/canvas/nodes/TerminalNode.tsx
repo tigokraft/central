@@ -79,10 +79,15 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const termInstance = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   // True once spawn_pty resolves, so a resize triggered before the PTY exists doesn't
   // invoke resize_pty against a session that isn't registered yet.
   const ptyReadyRef = useRef(false);
   const [ptyStatus, setPtyStatus] = useState<"idle" | "running" | "error">("idle");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<ISearchResultChangeEvent | null>(null);
   // Remembers the expanded height so restoring from minimized doesn't have to guess it.
   const preMinimizeHeightRef = useRef(node.height);
 
