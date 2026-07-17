@@ -2,6 +2,7 @@ import { useState, FormEvent } from "react";
 import { Sparkles, ArrowRight, Loader2 } from "lucide-react";
 import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
 import { parseOrchestratorGoal } from "../../lib/orchestratorParser";
+import Button from "../ui/Button";
 
 const CHILD_WIDTH = 320;
 const CODER_HEIGHT = 190;
@@ -97,7 +98,7 @@ export default function OrchestratorBar() {
 
   return (
     <div className="h-12 shrink-0 border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md px-4 flex items-center gap-3 z-10 select-none">
-      <div className="flex items-center gap-1.5 text-indigo-400 shrink-0">
+      <div className="flex items-center gap-1.5 text-emerald-400 shrink-0">
         <Sparkles size={14} />
         <span className="text-[10px] font-semibold uppercase tracking-wider hidden md:inline">
           Canvas Architect
@@ -109,16 +110,17 @@ export default function OrchestratorBar() {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder='Describe what to build… e.g. "Build an auth handler with unit tests and a security reviewer"'
-          className="flex-1 min-w-0 bg-slate-900 border border-slate-800 focus:border-indigo-500/60 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none font-mono transition-colors"
+          className="flex-1 min-w-0 bg-slate-900 border border-slate-800 focus:border-emerald-500/60 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none font-mono transition-colors"
         />
-        <button
+        <Button
           type="submit"
+          variant="primary"
           disabled={!value.trim() || isRunning}
-          className="flex items-center gap-1.5 bg-indigo-500 hover:bg-indigo-400 active:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-semibold px-3 py-1.5 rounded-lg text-[11px] tracking-wide transition-all cursor-pointer shrink-0"
+          className="tracking-wide shrink-0"
         >
           {isRunning ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
           Generate
-        </button>
+        </Button>
       </form>
     </div>
   );

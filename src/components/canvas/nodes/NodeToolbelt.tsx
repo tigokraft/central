@@ -75,11 +75,11 @@ export default function NodeToolbelt({ nodeId }: NodeToolbeltProps) {
       <button
         ref={triggerRef}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 p-0.5 hover:bg-slate-800 rounded text-slate-400 hover:text-indigo-400 transition-colors cursor-pointer shrink-0"
+        className="flex items-center gap-1 p-0.5 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer shrink-0"
         title="Attach MCP tools & choose provider"
       >
         <Wrench size={11} />
-        {attachedTools.length > 0 && <span className="text-[8px] font-mono text-indigo-400">{attachedTools.length}</span>}
+        {attachedTools.length > 0 && <span className="text-[8px] font-mono text-emerald-400">{attachedTools.length}</span>}
       </button>
 
       {open &&
@@ -87,7 +87,7 @@ export default function NodeToolbelt({ nodeId }: NodeToolbeltProps) {
           <div
             ref={panelRef}
             style={{ position: "fixed", top: panelPos.top, left: panelPos.left }}
-            className="w-56 bg-slate-950 border border-slate-800 rounded-lg shadow-2xl p-2 z-50 space-y-2"
+            className="w-56 bg-slate-950 border border-slate-800 rounded-lg shadow-overlay p-2 z-50 space-y-2"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -141,7 +141,7 @@ export default function NodeToolbelt({ nodeId }: NodeToolbeltProps) {
                           onClick={() => toggleTool({ serverId: server.serverId, toolName: tool.name })}
                           className={`w-full flex items-center justify-between gap-1 text-left px-1.5 py-1 rounded text-[9px] font-mono transition-colors cursor-pointer ${
                             attached
-                              ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"
+                              ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/40"
                               : "bg-slate-900 text-slate-400 border border-slate-800 hover:border-slate-700"
                           }`}
                         >

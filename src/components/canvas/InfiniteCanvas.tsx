@@ -534,7 +534,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
       {/* Custom Context Menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 bg-slate-950/95 backdrop-blur-md border border-slate-800 rounded-lg shadow-2xl py-1.5 w-52 select-none"
+          className="fixed z-50 bg-slate-950/95 backdrop-blur-md border border-slate-800 rounded-lg shadow-overlay py-1.5 w-52 select-none"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -544,35 +544,35 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
                 onClick={() => handleAddNodeFromMenu("terminalNode")}
                 className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
               >
-                <Terminal size={12} className="text-emerald-500" />
+                <Terminal size={12} className="text-slate-400" />
                 Add Terminal Node
               </button>
               <button
                 onClick={() => handleAddNodeFromMenu("actionContainerNode")}
                 className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
               >
-                <Box size={12} className="text-blue-500" />
+                <Box size={12} className="text-slate-400" />
                 Add Action Container
               </button>
               <button
                 onClick={() => handleAddNodeFromMenu("promptNode")}
                 className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
               >
-                <MessageSquare size={12} className="text-purple-500" />
+                <MessageSquare size={12} className="text-slate-400" />
                 Add Prompt Node
               </button>
               <button
                 onClick={() => handleAddNodeFromMenu("memoryNode")}
                 className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
               >
-                <Brain size={12} className="text-pink-500" />
+                <Brain size={12} className="text-slate-400" />
                 Add Neural Memory
               </button>
               <button
                 onClick={() => handleAddNodeFromMenu("actionFrameNode")}
                 className="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer"
               >
-                <FrameIcon size={12} className="text-indigo-400" />
+                <FrameIcon size={12} className="text-slate-400" />
                 Add Action Frame
               </button>
             </>
