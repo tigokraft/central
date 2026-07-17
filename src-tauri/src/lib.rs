@@ -2,8 +2,8 @@ mod ephemeral;
 mod git_engine;
 mod graph_runner;
 mod mcp;
-mod project;
 pub mod memory;
+mod project;
 mod pty_manager;
 
 use std::path::PathBuf;
