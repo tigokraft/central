@@ -48,9 +48,32 @@ fn ensure_dirs(project_root: &Path) -> (PathBuf, PathBuf) {
     (memory_dir, vault_dir)
 }
 
-fn generate_embedding(_text: &str) -> Vec<f32> {
-    // Mock embedding generation (128 dims)
-    vec![0.1; 128]
+const EMBEDDING_DIMS: usize = 128;
+
+// Lightweight bag-of-words embedding via the hashing trick (as used by e.g. Vowpal Wabbit /
+// sklearn's HashingVectorizer): each lowercased token is hashed into one of EMBEDDING_DIMS
+// buckets and the resulting counts are L2-normalized. This has no model download or network
+// dependency, but unlike a constant vector it actually differentiates text content, so
+// query_memory_graph's vector_search below returns meaningful nearest neighbors.
+fn generate_embedding(text: &str) -> Vec<f32> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut vector = vec![0f32; EMBEDDING_DIMS];
+    for token in text.to_lowercase().split_whitespace() {
+        let mut hasher = DefaultHasher::new();
+        token.hash(&mut hasher);
+        let bucket = (hasher.finish() as usize) % EMBEDDING_DIMS;
+        vector[bucket] += 1.0;
+    }
+
+    let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for v in vector.iter_mut() {
+            *v /= norm;
+        }
+    }
+    vector
 }
 
 async fn get_lancedb_connection(project_root: &Path) -> Result<Connection, String> {
@@ -230,28 +253,6 @@ pub async fn query_memory_graph(
     }
 
     Ok(search_results)
-}
-
-#[tauri::command]
-pub async fn supersede_record(
-    old_id: String,
-    new_id: String,
-    app: AppHandle,
-) -> Result<(), String> {
-    let project_root = crate::git_engine::resolve_repo_root(&app);
-    let (memory_dir, _) = ensure_dirs(&project_root);
-    let aimem_path = memory_dir.join(format!("{}.aimem", old_id));
-
-    if aimem_path.exists() {
-        println!("Superseded {} with {}", old_id, new_id);
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn export_to_obsidian() -> Result<(), String> {
-    println!("All files synced to .central/vault/ successfully!");
-    Ok(())
 }
 
 /// Lists every `.aimem` record on disk (newest first) for the Terminal Node's
