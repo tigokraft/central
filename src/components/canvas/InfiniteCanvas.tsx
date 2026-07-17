@@ -791,6 +791,9 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
         />
       )}
 
+      {/* Shortcuts Overlay (?) */}
+      {isShortcutsOpen && <ShortcutsOverlay onClose={() => setIsShortcutsOpen(false)} />}
+
       {/* Custom native Minimap */}
       {showMinimap && (
         <Minimap
