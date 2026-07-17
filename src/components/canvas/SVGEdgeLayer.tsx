@@ -1,5 +1,7 @@
-import { useCanvasStore, getHandlePosition } from "../../store/canvasStore";
+import { useEffect, useRef } from "react";
+import { useCanvasStore, getHandlePosition, type CableDiffStat } from "../../store/canvasStore";
 import { isRectVisible, getControlPoints, getBezierPath, type Bounds } from "../../lib/canvasGeometry";
+import { edgeDragRegistry } from "../../lib/edgeDragRegistry";
 
 interface SVGEdgeLayerProps {
   // When provided, edges with neither endpoint node inside these bounds are skipped.
@@ -22,6 +24,68 @@ function getBezierMidpoint(
     x: 0.125 * x1 + 0.375 * cp1x + 0.375 * cp2x + 0.125 * x2,
     y: 0.125 * y1 + 0.375 * cp1y + 0.375 * cp2y + 0.125 * y2,
   };
+}
+
+interface EdgeCableProps {
+  edgeId: string;
+  d: string;
+  strokeColor: string;
+  markerUrl: string;
+  dashClass: string;
+  diffStat?: CableDiffStat;
+  mid: { x: number; y: number } | null;
+  onDelete: () => void;
+}
+
+// Renders one cable's paths and registers their DOM refs with edgeDragRegistry, so an
+// in-progress node drag (see nodeDragController) can update just this cable's `d` directly
+// instead of waiting for a full SVGEdgeLayer re-render.
+function EdgeCable({ edgeId, d, strokeColor, markerUrl, dashClass, diffStat, mid, onDelete }: EdgeCableProps) {
+  const hitRef = useRef<SVGPathElement>(null);
+  const shadowRef = useRef<SVGPathElement>(null);
+  const cableRef = useRef<SVGPathElement>(null);
+
+  useEffect(() => {
+    edgeDragRegistry.register(edgeId, { hit: hitRef.current, shadow: shadowRef.current, cable: cableRef.current });
+    return () => edgeDragRegistry.unregister(edgeId);
+  }, [edgeId]);
+
+  return (
+    <g className="group">
+      {/* Interactive Wide Path for selection and double-click delete */}
+      <path
+        ref={hitRef}
+        d={d}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={16}
+        className="pointer-events-auto cursor-pointer"
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+      >
+        <title>Double click to delete connection</title>
+      </path>
+      {/* Edge Shadow/Backing */}
+      <path ref={shadowRef} d={d} fill="none" stroke="var(--color-slate-950)" strokeWidth={4} />
+      {/* Cable */}
+      <path ref={cableRef} d={d} fill="none" stroke={strokeColor} strokeWidth={2} className={dashClass} markerEnd={markerUrl} />
+      {/* Floating Git Diff Badge: agent hand-off stats between Coder and Reviewer nodes */}
+      {diffStat && mid && (
+        <foreignObject x={mid.x - 45} y={mid.y - 11} width={90} height={22} className="pointer-events-none overflow-visible">
+          <div
+            title={`Hand-off commit ${diffStat.commitSha.slice(0, 7)}`}
+            className="flex items-center justify-center gap-1 w-fit mx-auto bg-slate-950/95 border border-slate-700 rounded-full px-2 py-0.5 text-[9px] font-mono shadow-lg whitespace-nowrap"
+          >
+            <span className="text-emerald-400">+{diffStat.insertions}</span>
+            <span className="text-slate-600">/</span>
+            <span className="text-red-400">-{diffStat.deletions}</span>
+          </div>
+        </foreignObject>
+      )}
+    </g>
+  );
 }
 
 export default function SVGEdgeLayer({ viewBounds }: SVGEdgeLayerProps) {
@@ -120,57 +184,17 @@ export default function SVGEdgeLayer({ viewBounds }: SVGEdgeLayerProps) {
           : null;
 
         return (
-          <g key={edge.id} className="group">
-            {/* Interactive Wide Path for selection and double-click delete */}
-            <path
-              d={d}
-              fill="none"
-              stroke="transparent"
-              strokeWidth={16}
-              className="pointer-events-auto cursor-pointer"
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                deleteEdge(edge.id);
-              }}
-            >
-              <title>Double click to delete connection</title>
-            </path>
-            {/* Edge Shadow/Backing */}
-            <path
-              d={d}
-              fill="none"
-              stroke="var(--color-slate-950)"
-              strokeWidth={4}
-            />
-            {/* Cable */}
-            <path
-              d={d}
-              fill="none"
-              stroke={strokeColor}
-              strokeWidth={2}
-              className={dashClass}
-              markerEnd={markerUrl}
-            />
-            {/* Floating Git Diff Badge: agent hand-off stats between Coder and Reviewer nodes */}
-            {diffStat && mid && (
-              <foreignObject
-                x={mid.x - 45}
-                y={mid.y - 11}
-                width={90}
-                height={22}
-                className="pointer-events-none overflow-visible"
-              >
-                <div
-                  title={`Hand-off commit ${diffStat.commitSha.slice(0, 7)}`}
-                  className="flex items-center justify-center gap-1 w-fit mx-auto bg-slate-950/95 border border-slate-700 rounded-full px-2 py-0.5 text-[9px] font-mono shadow-lg whitespace-nowrap"
-                >
-                  <span className="text-emerald-400">+{diffStat.insertions}</span>
-                  <span className="text-slate-600">/</span>
-                  <span className="text-red-400">-{diffStat.deletions}</span>
-                </div>
-              </foreignObject>
-            )}
-          </g>
+          <EdgeCable
+            key={edge.id}
+            edgeId={edge.id}
+            d={d}
+            strokeColor={strokeColor}
+            markerUrl={markerUrl}
+            dashClass={dashClass}
+            diffStat={diffStat}
+            mid={mid}
+            onDelete={() => deleteEdge(edge.id)}
+          />
         );
       })}
 
