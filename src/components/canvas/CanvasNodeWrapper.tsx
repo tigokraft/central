@@ -1,8 +1,9 @@
 import { useRef, useEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../store/canvasStore";
-import { findAlignmentGuides } from "../../lib/canvasGeometry";
 import { viewportController } from "../../lib/viewportController";
+import { nodeDragController } from "../../lib/nodeDragController";
+import { nodeDragRegistry } from "../../lib/nodeDragRegistry";
 
 interface CanvasNodeWrapperProps {
   node: CanvasNode;
@@ -28,6 +29,16 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
   // by the store (like the other container types) instead of auto-sizing to content.
   const isContainer =
     node.type === "actionContainerNode" || node.type === "actionFrameNode" || node.type === "terminalNode";
+
+  // Register this node's wrapper element so an in-progress drag (possibly owned by a
+  // different node's CanvasNodeWrapper instance, e.g. a multi-select drag) can move it
+  // directly — see nodeDragController.
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    nodeDragRegistry.register(node.id, el);
+    return () => nodeDragRegistry.unregister(node.id);
+  }, [node.id]);
 
   // Automatically measure actual laid-out dimensions and sync to store
   useEffect(() => {
@@ -66,7 +77,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
   }, [node.id, isContainer, updateNodeDimensions]);
 
   const bindDrag = useDrag(
-    ({ delta: [dx, dy], first, last, event, tap }) => {
+    ({ movement: [mx, my], first, last, event, tap }) => {
       if (activeTool !== "select") return;
 
       const target = event.target as HTMLElement;
@@ -103,43 +114,34 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
             setSelectedNodeIds([node.id]);
           }
         }
+        const { nodes, edges, selectedNodeIds: currentSelection } = useCanvasStore.getState();
+        nodeDragController.begin(node.id, currentSelection, nodes, edges, setDragGuides);
       }
 
+      // Mutates the moved node(s)' own DOM position and the edges touching them directly,
+      // batched to one write per animation frame — see nodeDragController. The store isn't
+      // touched again until `last`, so a drag no longer forces every node/cable to re-render.
       const zoom = viewportController.getViewport().zoom;
-
-      const rawDx = dx / zoom;
-      const rawDy = dy / zoom;
-      const nextX = node.x + rawDx;
-      const nextY = node.y + rawDy;
-
-      // Figma-style alignment guides: snap live onto other nodes' edges/centers while
-      // dragging, rather than only correcting to the grid on release.
-      const others = useCanvasStore.getState().nodes.filter((n) => n.id !== node.id);
-      const guides = findAlignmentGuides(
-        { x: nextX, y: nextY, width: node.width, height: node.height },
-        others,
-        6 / zoom
-      );
-      const hasGuide = guides.vertical.length > 0 || guides.horizontal.length > 0;
-      const finalDx = rawDx + guides.snapDx;
-      const finalDy = rawDy + guides.snapDy;
-
-      updateNodePosition(node.id, node.x + finalDx, node.y + finalDy, { dx: finalDx, dy: finalDy });
-      setDragGuides(hasGuide ? { vertical: guides.vertical, horizontal: guides.horizontal } : null);
+      nodeDragController.update(mx / zoom, my / zoom, zoom);
 
       if (last) {
-        // Snap to the nearest grid line on release — but only on the axis that didn't
-        // already snap to another node's edge, so aligning two cards doesn't get overridden
-        // by the grid a moment later.
-        const settledX = node.x + finalDx;
-        const settledY = node.y + finalDy;
-        const snapCorrectionX = guides.vertical.length > 0 ? 0 : Math.round(settledX / SNAP_SIZE) * SNAP_SIZE - settledX;
-        const snapCorrectionY = guides.horizontal.length > 0 ? 0 : Math.round(settledY / SNAP_SIZE) * SNAP_SIZE - settledY;
-        if (snapCorrectionX !== 0 || snapCorrectionY !== 0) {
-          updateNodePosition(node.id, settledX + snapCorrectionX, settledY + snapCorrectionY, {
-            dx: snapCorrectionX,
-            dy: snapCorrectionY,
-          });
+        const result = nodeDragController.end();
+        if (result) {
+          const settledX = node.x + result.dx;
+          const settledY = node.y + result.dy;
+          updateNodePosition(node.id, settledX, settledY, { dx: result.dx, dy: result.dy });
+
+          // Snap to the nearest grid line on release — but only on the axis that didn't
+          // already snap to another node's edge, so aligning two cards doesn't get overridden
+          // by the grid a moment later.
+          const snapCorrectionX = result.hadVerticalGuide ? 0 : Math.round(settledX / SNAP_SIZE) * SNAP_SIZE - settledX;
+          const snapCorrectionY = result.hadHorizontalGuide ? 0 : Math.round(settledY / SNAP_SIZE) * SNAP_SIZE - settledY;
+          if (snapCorrectionX !== 0 || snapCorrectionY !== 0) {
+            updateNodePosition(node.id, settledX + snapCorrectionX, settledY + snapCorrectionY, {
+              dx: snapCorrectionX,
+              dy: snapCorrectionY,
+            });
+          }
         }
         reparentNode(node.id);
         setDragGuides(null);
