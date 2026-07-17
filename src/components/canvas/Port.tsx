@@ -6,7 +6,7 @@ interface PortProps {
   nodeId: string;
   handleId: string;
   type: "source" | "target";
-  color?: "emerald" | "pink" | "blue" | "purple";
+  color?: "emerald" | "neutral";
   className?: string;
 }
 
@@ -100,20 +100,10 @@ export default function Port({ nodeId, handleId, type, color = "emerald", classN
       hoverBg: "hover:bg-emerald-400",
       dotBg: "bg-emerald-500",
     },
-    pink: {
-      border: "border-pink-500",
-      hoverBg: "hover:bg-pink-400",
-      dotBg: "bg-pink-500",
-    },
-    blue: {
-      border: "border-blue-500",
-      hoverBg: "hover:bg-blue-400",
-      dotBg: "bg-blue-500",
-    },
-    purple: {
-      border: "border-purple-500",
-      hoverBg: "hover:bg-purple-400",
-      dotBg: "bg-purple-500",
+    neutral: {
+      border: "border-slate-500",
+      hoverBg: "hover:bg-slate-400",
+      dotBg: "bg-slate-500",
     },
   }[color];
 

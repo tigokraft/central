@@ -65,34 +65,34 @@ export default function MemoryNode({ node }: MemoryNodeProps) {
   };
 
   return (
-    <div className="relative w-full h-full bg-slate-900 border border-purple-800/80 rounded-lg shadow-2xl overflow-hidden p-3 flex flex-col transition-all hover:border-purple-500/80 select-none">
+    <div className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-lg shadow-panel overflow-hidden p-3 flex flex-col transition-colors hover:border-emerald-500/50 select-none">
       {/* Input / Output Handles */}
       <Port
         nodeId={id}
         handleId="input"
         type="target"
-        color="purple"
+        color="neutral"
         className="absolute -left-1.5 top-1/2 -translate-y-1/2"
       />
       <Port
         nodeId={id}
         handleId="output"
         type="source"
-        color="purple"
+        color="neutral"
         className="absolute -right-1.5 top-1/2 -translate-y-1/2"
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-3 border-b border-purple-900/50 pb-2 shrink-0">
-        <div className="flex items-center gap-2 text-purple-400">
-          <Brain size={14} className="animate-pulse" />
+      <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2 shrink-0">
+        <div className="flex items-center gap-2 text-slate-300">
+          <Brain size={14} />
           <span className="font-mono text-xs font-semibold tracking-wide">
-            {data.label || "Neural Memory"}
+            {data.label || "Memory"}
           </span>
         </div>
-        <button 
+        <button
           onClick={handleCreateMemory}
-          className="bg-purple-600 hover:bg-purple-500 text-white text-[9px] px-2 py-0.5 rounded transition-colors"
+          className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-[9px] px-2 py-0.5 rounded transition-colors"
           data-nodrag
         >
           Index Fact
@@ -100,7 +100,7 @@ export default function MemoryNode({ node }: MemoryNodeProps) {
       </div>
 
       {/* Active Context */}
-      <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto custom-scrollbar" data-nodrag>
+      <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto" data-nodrag>
         
         {/* Facts & Entities section */}
         <div className="grid grid-cols-2 gap-2 mb-2">
@@ -118,7 +118,7 @@ export default function MemoryNode({ node }: MemoryNodeProps) {
             </h4>
             <div className="flex flex-wrap gap-1 mt-1">
               {entities.map((ent: string, i: number) => (
-                <span key={i} className="text-[8px] bg-purple-500/20 text-purple-300 px-1 rounded border border-purple-500/30">
+                <span key={i} className="text-[8px] bg-slate-700/60 text-slate-300 px-1 rounded border border-slate-600/60">
                   {ent}
                 </span>
               ))}
@@ -135,17 +135,17 @@ export default function MemoryNode({ node }: MemoryNodeProps) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Query memory graph..." 
-              className="w-full bg-slate-950/80 border border-slate-700 rounded py-1.5 pl-6 pr-2 text-[10px] text-slate-200 focus:outline-none focus:border-purple-500/50 font-mono"
+              className="w-full bg-slate-950/80 border border-slate-700 rounded py-1.5 pl-6 pr-2 text-[10px] text-slate-200 focus:outline-none focus:border-emerald-500/50 font-mono"
             />
           </form>
-          
+
           {/* Search Results */}
           {results.length > 0 && (
-            <div className="mt-2 bg-slate-950 rounded border border-purple-900/50 p-1.5 max-h-[80px] overflow-y-auto">
-              <div className="text-[8px] text-purple-400 mb-1">Results:</div>
+            <div className="mt-2 bg-slate-950 rounded border border-slate-800 p-1.5 max-h-[80px] overflow-y-auto">
+              <div className="text-[8px] text-slate-400 mb-1">Results:</div>
               {results.map((res, i) => (
                 <div key={i} className="text-[9px] text-slate-300 border-b border-slate-800/50 last:border-0 pb-1 mb-1">
-                  <span className="text-purple-300 mr-1">[{res.id}]</span>
+                  <span className="text-slate-400 mr-1">[{res.id}]</span>
                   {res.content} <span className="text-emerald-400 ml-1">{(res.score * 100).toFixed(0)}%</span>
                 </div>
               ))}

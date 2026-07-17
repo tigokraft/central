@@ -327,7 +327,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         nodeId={id}
         handleId="context"
         type="target"
-        color="purple"
+        color="neutral"
         className="absolute -left-1.5 top-1/2 -translate-y-1/2"
       />
 
