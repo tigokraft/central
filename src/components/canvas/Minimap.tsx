@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCanvasStore } from "../../store/canvasStore";
 import { getNodesBounds } from "../../lib/canvasGeometry";
 
@@ -10,6 +10,9 @@ interface MinimapProps {
 export default function Minimap({ containerWidth, containerHeight }: MinimapProps) {
   const nodes = useCanvasStore((state) => state.nodes);
   const viewport = useCanvasStore((state) => state.viewport);
+  const setViewport = useCanvasStore((state) => state.setViewport);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Calculate the bounds of all nodes
   const bounds = useMemo(() => {
