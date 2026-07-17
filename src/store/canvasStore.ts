@@ -325,7 +325,7 @@ export const useCanvasStore = create<CanvasState>()(
         break;
       case "memoryNode":
         label = "Neural Memory";
-        data = { label, facts: ["App uses Tauri", "Memory Node added"] };
+        data = { label };
         break;
       case "actionFrameNode":
         label = "Action Frame";
