@@ -71,6 +71,33 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
   const viewWidth = viewportCanvas.w * scale;
   const viewHeight = viewportCanvas.h * scale;
 
+  // Centers the main canvas viewport on the canvas-space point under (clientX, clientY),
+  // keeping the current zoom level.
+  const centerOnClientPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const rect = mapRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const { x: canvasX, y: canvasY } = toCanvasCoords(clientX - rect.left, clientY - rect.top);
+      setViewport({
+        x: containerWidth / 2 - canvasX * viewport.zoom,
+        y: containerHeight / 2 - canvasY * viewport.zoom,
+      });
+    },
+    [bounds.minX, bounds.minY, offsetX, offsetY, scale, containerWidth, containerHeight, viewport.zoom, setViewport]
+  );
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const handleMove = (e: MouseEvent) => centerOnClientPoint(e.clientX, e.clientY);
+    const handleUp = () => setIsDragging(false);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [isDragging, centerOnClientPoint]);
+
   return (
     <div
       className="absolute bottom-4 right-4 bg-slate-950/90 border border-slate-800 rounded-lg p-1.5 shadow-overlay overflow-hidden select-none z-40"
