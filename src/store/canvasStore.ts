@@ -118,6 +118,25 @@ export function getHandlePosition(node: CanvasNode, handleId: string): { x: numb
   return { x: node.x + node.width, y: node.y + node.height / 2 };
 }
 
+// Given the set of explicitly-dragged/selected node ids, resolves the full set of node ids
+// that should actually move together: a node whose parent is also in `nodesToMove` is left
+// alone (its parent's own move already accounts for it), while a node that isn't explicitly
+// moved but whose parent is gets carried along. Shared by updateNodePosition and
+// nodeDragController so both agree on exactly which nodes a drag gesture affects.
+export function resolveMovingIds(nodesToMove: string[], allNodes: CanvasNode[]): Set<string> {
+  const toMoveSet = new Set(nodesToMove);
+  const moving = new Set<string>();
+  for (const n of allNodes) {
+    if (toMoveSet.has(n.id)) {
+      if (n.parentId && toMoveSet.has(n.parentId)) continue;
+      moving.add(n.id);
+    } else if (n.parentId && toMoveSet.has(n.parentId)) {
+      moving.add(n.id);
+    }
+  }
+  return moving;
+}
+
 interface Viewport {
   x: number;
   y: number;
@@ -403,22 +422,10 @@ export const useCanvasStore = create<CanvasState>()(
 
       const isSelected = state.selectedNodeIds.includes(id);
       const nodesToMove = isSelected ? state.selectedNodeIds : [id];
+      const moving = resolveMovingIds(nodesToMove, state.nodes);
 
       return {
-        nodes: state.nodes.map((n) => {
-          if (nodesToMove.includes(n.id)) {
-            // Prevent double moving if parent is also selected and being moved
-            if (n.parentId && nodesToMove.includes(n.parentId)) {
-              return n;
-            }
-            return { ...n, x: n.x + dx, y: n.y + dy };
-          }
-          // Move children relative to their parent if the parent is moved but child is not in selection
-          if (n.parentId && nodesToMove.includes(n.parentId) && !nodesToMove.includes(n.id)) {
-            return { ...n, x: n.x + dx, y: n.y + dy };
-          }
-          return n;
-        }),
+        nodes: state.nodes.map((n) => (moving.has(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
       };
     }),
 
