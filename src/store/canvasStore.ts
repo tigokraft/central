@@ -850,6 +850,36 @@ viewportController.init(useCanvasStore.getState().viewport, (vp) =>
   useCanvasStore.setState({ viewport: vp })
 );
 
+const AUTOSAVE_DEBOUNCE_MS = 2000;
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function persistActiveProject() {
+  const { activeProjectId, nodes, edges, viewport } = useCanvasStore.getState();
+  if (!activeProjectId) return;
+  try {
+    await invoke("save_project_graph", {
+      projectId: activeProjectId,
+      graph: { nodes, edges, viewport },
+    });
+  } catch (err) {
+    console.error("Failed to autosave project:", err);
+  }
+}
+
+// Debounced autosave: any nodes/edges mutation while a project is open schedules a write to
+// that project's graph.json ~2s after the last change, coalescing bursts (drags, streaming
+// node updates) into a single save.
+useCanvasStore.subscribe((state, prevState) => {
+  if (!state.activeProjectId) return;
+  if (state.nodes === prevState.nodes && state.edges === prevState.edges) return;
+
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null;
+    void persistActiveProject();
+  }, AUTOSAVE_DEBOUNCE_MS);
+});
+
 // zundo's automatic per-set() tracking is deliberately disabled here (see below) — every
 // action in this store rebuilds `nodes`/`edges` via .map()/spread even when nothing
 // relevant actually changed (e.g. a no-op reparent), so array-reference equality can't
