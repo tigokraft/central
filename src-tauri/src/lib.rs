@@ -31,6 +31,7 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(pty_manager::PtyManager::default())
         .manage(graph_runner::GraphRunnerState::default())
         .manage(git_engine::GitEngineState::default())
