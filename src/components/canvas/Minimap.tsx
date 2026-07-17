@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCanvasStore } from "../../store/canvasStore";
 import { getNodesBounds } from "../../lib/canvasGeometry";
 
@@ -10,6 +10,9 @@ interface MinimapProps {
 export default function Minimap({ containerWidth, containerHeight }: MinimapProps) {
   const nodes = useCanvasStore((state) => state.nodes);
   const viewport = useCanvasStore((state) => state.viewport);
+  const setViewport = useCanvasStore((state) => state.setViewport);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Calculate the bounds of all nodes
   const bounds = useMemo(() => {
@@ -47,6 +50,14 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
     };
   };
 
+  // Inverse of toMapCoords: minimap-space point -> canvas-space point.
+  const toCanvasCoords = (mx: number, my: number) => {
+    return {
+      x: (mx - offsetX) / scale + bounds.minX,
+      y: (my - offsetY) / scale + bounds.minY,
+    };
+  };
+
   // Viewport box in canvas space
   const viewportCanvas = useMemo(() => {
     const w = containerWidth / viewport.zoom;
@@ -60,12 +71,46 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
   const viewWidth = viewportCanvas.w * scale;
   const viewHeight = viewportCanvas.h * scale;
 
+  // Centers the main canvas viewport on the canvas-space point under (clientX, clientY),
+  // keeping the current zoom level.
+  const centerOnClientPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const rect = mapRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const { x: canvasX, y: canvasY } = toCanvasCoords(clientX - rect.left, clientY - rect.top);
+      setViewport({
+        x: containerWidth / 2 - canvasX * viewport.zoom,
+        y: containerHeight / 2 - canvasY * viewport.zoom,
+      });
+    },
+    [bounds.minX, bounds.minY, offsetX, offsetY, scale, containerWidth, containerHeight, viewport.zoom, setViewport]
+  );
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const handleMove = (e: MouseEvent) => centerOnClientPoint(e.clientX, e.clientY);
+    const handleUp = () => setIsDragging(false);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [isDragging, centerOnClientPoint]);
+
   return (
     <div
       className="absolute bottom-4 right-4 bg-slate-950/90 border border-slate-800 rounded-lg p-1.5 shadow-overlay overflow-hidden select-none z-40"
       style={{ width: mapWidth + 12, height: mapHeight + 12 }}
     >
-      <div className="relative w-full h-full bg-slate-900/60 rounded">
+      <div
+        ref={mapRef}
+        className="relative w-full h-full bg-slate-900/60 rounded cursor-crosshair"
+        onMouseDown={(e) => {
+          setIsDragging(true);
+          centerOnClientPoint(e.clientX, e.clientY);
+        }}
+      >
         {/* Render Miniature Nodes */}
         {nodes.map((node) => {
           const pos = toMapCoords(node.x, node.y);
