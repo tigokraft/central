@@ -137,11 +137,19 @@ export function resolveMovingIds(nodesToMove: string[], allNodes: CanvasNode[]):
   return moving;
 }
 
-interface Viewport {
+export interface Viewport {
   x: number;
   y: number;
   zoom: number;
 }
+
+// Starting graph handed to hydrateFromProject() when a brand-new project is created (see
+// HomeView's "New Project" flow) — an empty canvas, matching the store's own empty boot state.
+export const NEW_PROJECT_TEMPLATE: { nodes: CanvasNode[]; edges: CanvasEdge[]; viewport: Viewport } = {
+  nodes: [],
+  edges: [],
+  viewport: { x: 0, y: 0, zoom: 1 },
+};
 
 interface CanvasState {
   viewport: Viewport;

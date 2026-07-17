@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Play, ZoomIn, ZoomOut, Maximize, Map, KeyRound } from "lucide-react";
+import { Play, ZoomIn, ZoomOut, Maximize, Map, KeyRound, ArrowLeft } from "lucide-react";
 import { useCanvasStore } from "../store/canvasStore";
+import { useAppViewStore } from "../store/appViewStore";
 import ProviderSettingsModal from "./ProviderSettingsModal";
 import Button from "./ui/Button";
 
@@ -14,6 +15,7 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
   const zoomToFit = useCanvasStore((state) => state.zoomToFit);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const runPipeline = useCanvasStore((state) => state.runPipeline);
+  const goHome = useAppViewStore((state) => state.goHome);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
 
   const resetView = () => {
@@ -22,8 +24,14 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
 
   return (
     <div className="h-14 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-4 flex items-center justify-between select-none z-10 shrink-0">
-      {/* Left spacer (workspace name lives on the Home page; canvas is single-project until Phase 3) */}
-      <div />
+      {/* Back to Home */}
+      <button
+        onClick={goHome}
+        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer"
+      >
+        <ArrowLeft size={13} />
+        Home
+      </button>
 
       {/* Center Action */}
       <div>
