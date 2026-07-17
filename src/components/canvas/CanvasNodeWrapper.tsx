@@ -137,10 +137,8 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
         height: isContainer ? node.height : "auto", // auto height layout for dynamic text elements
         transformOrigin: "top left",
       }}
-      className={`absolute group select-none transition-shadow duration-100 ${
-        isSelected
-          ? "ring-2 ring-emerald-500 rounded-xl shadow-[0_0_18px_rgba(16,185,129,0.35)] z-20"
-          : "z-10"
+      className={`absolute group select-none ${
+        isSelected ? "outline outline-2 outline-emerald-500 rounded-xl z-20" : "z-10"
       }`}
       {...(bindDrag() as any)}
     >
