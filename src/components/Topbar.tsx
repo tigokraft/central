@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Play, ZoomIn, ZoomOut, Maximize, Map, Layers, KeyRound } from "lucide-react";
+import { Play, ZoomIn, ZoomOut, Maximize, Map, KeyRound } from "lucide-react";
 import { useCanvasStore } from "../store/canvasStore";
 import ProviderSettingsModal from "./ProviderSettingsModal";
+import Button from "./ui/Button";
 
 interface TopbarProps {
   showMinimap: boolean;
@@ -20,27 +21,15 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
 
   return (
     <div className="h-14 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-4 flex items-center justify-between select-none z-10 shrink-0">
-      {/* Workspace Selector */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg">
-          <Layers size={14} className="text-emerald-400" />
-          <select className="bg-transparent text-xs text-slate-300 font-mono focus:outline-none cursor-pointer">
-            <option value="central">c:/Users/exxo/Documents/central</option>
-            <option value="nodecode">c:/Users/exxo/Documents/nodecode</option>
-            <option value="sandbox">c:/Users/exxo/Documents/sandbox</option>
-          </select>
-        </div>
-      </div>
+      {/* Left spacer (workspace name lives on the Home page; canvas is single-project until Phase 3) */}
+      <div />
 
       {/* Center Action */}
       <div>
-        <button
-          onClick={runPipeline}
-          className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-slate-950 font-semibold px-4 py-1.5 rounded-lg text-xs tracking-wider transition-all duration-200 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] cursor-pointer animate-pulse-slow"
-        >
+        <Button variant="primary" size="md" onClick={runPipeline} className="font-semibold tracking-wider">
           <Play size={12} fill="currentColor" />
           RUN EXECUTION GRAPH
-        </button>
+        </Button>
       </div>
 
       {/* Right Canvas Controls */}
@@ -87,7 +76,7 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
         <button
           onClick={() => setShowProviderSettings(true)}
           title="Provider Settings"
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 text-slate-400 hover:text-indigo-400 hover:border-indigo-500/30 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer"
         >
           <KeyRound size={13} />
           Providers
