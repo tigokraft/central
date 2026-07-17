@@ -20,7 +20,7 @@ pub async fn run_ephemeral_command(node_id: String, command: String, app: AppHan
         },
     );
 
-    let working_dir = crate::git_engine::resolve_repo_root();
+    let working_dir = crate::git_engine::resolve_repo_root(&app);
     let result = run_shell_command_raw(&app, &node_id, &command, &working_dir, &[]).await;
 
     match result {
