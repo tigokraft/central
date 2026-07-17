@@ -50,6 +50,14 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
     };
   };
 
+  // Inverse of toMapCoords: minimap-space point -> canvas-space point.
+  const toCanvasCoords = (mx: number, my: number) => {
+    return {
+      x: (mx - offsetX) / scale + bounds.minX,
+      y: (my - offsetY) / scale + bounds.minY,
+    };
+  };
+
   // Viewport box in canvas space
   const viewportCanvas = useMemo(() => {
     const w = containerWidth / viewport.zoom;
