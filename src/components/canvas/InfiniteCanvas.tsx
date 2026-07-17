@@ -193,9 +193,32 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
     const container = containerRef.current;
     if (!container) return;
 
+    // Trackpad two-finger pans fire a rapid burst of wheel events with no explicit
+    // "release" signal, so momentum is launched from a smoothed (EMA) velocity once a short
+    // gap (RELEASE_GAP_MS) passes with no further wheel events — the same idle-gap idiom the
+    // controller's own debounced store commit uses.
+    const RELEASE_GAP_MS = 120;
+    const velocity = { vx: 0, vy: 0, lastT: 0 };
+    let releaseTimer: number | null = null;
+
+    const clearReleaseTimer = () => {
+      if (releaseTimer != null) {
+        window.clearTimeout(releaseTimer);
+        releaseTimer = null;
+      }
+    };
+
     const handleWheelNative = (e: WheelEvent) => {
       e.preventDefault();
+      clearReleaseTimer();
+
       if (e.ctrlKey) {
+        // Pinch/ctrl-zoom isn't a pan gesture — drop any velocity being tracked so a stray
+        // pinch mid-swipe doesn't launch momentum from a stale direction afterwards.
+        velocity.vx = 0;
+        velocity.vy = 0;
+        velocity.lastT = performance.now();
+
         const rect = container.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
@@ -203,20 +226,41 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         const zoomFactor = 1 - clampedDelta * 0.0012;
         // Direct, 1:1 controller write — no store round-trip, no React re-render per tick.
         viewportController.zoomBy(zoomFactor, mouseX, mouseY);
-      } else {
-        let dx = e.deltaX;
-        let dy = e.deltaY;
-        if (e.shiftKey && dx === 0) {
-          dx = dy;
-          dy = 0;
-        }
-        // Scale delta for smoother native panning without clamping jumps
-        viewportController.panBy(-dx * 0.5, -dy * 0.5);
+        return;
       }
+
+      let dx = e.deltaX;
+      let dy = e.deltaY;
+      if (e.shiftKey && dx === 0) {
+        dx = dy;
+        dy = 0;
+      }
+      // Scale delta for smoother native panning without clamping jumps
+      const panDx = -dx * 0.5;
+      const panDy = -dy * 0.5;
+      viewportController.panBy(panDx, panDy);
+
+      // Exponential moving average of per-frame (~16.7ms) velocity, so one jittery event
+      // doesn't set a wild launch speed for the momentum decay below.
+      const now = performance.now();
+      const dt = Math.max(now - velocity.lastT, 1);
+      velocity.lastT = now;
+      const instVx = (panDx / dt) * 16.7;
+      const instVy = (panDy / dt) * 16.7;
+      velocity.vx = velocity.vx * 0.7 + instVx * 0.3;
+      velocity.vy = velocity.vy * 0.7 + instVy * 0.3;
+
+      releaseTimer = window.setTimeout(() => {
+        releaseTimer = null;
+        viewportController.startMomentum(velocity.vx, velocity.vy);
+        velocity.vx = 0;
+        velocity.vy = 0;
+      }, RELEASE_GAP_MS);
     };
 
     container.addEventListener("wheel", handleWheelNative, { passive: false });
     return () => {
+      clearReleaseTimer();
       container.removeEventListener("wheel", handleWheelNative);
     };
   }, []);
