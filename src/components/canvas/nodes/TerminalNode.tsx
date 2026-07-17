@@ -71,10 +71,61 @@ function buildCommandWithContext(command: string, nodeData: CanvasNode["data"]):
 // Collapsed height of a minimized terminal card: just tall enough for the title bar.
 const MINIMIZED_HEIGHT = 36;
 
+// Unique id generator for terminalRunHistory entries — a node produces many lines over its
+// lifetime (unlike ephemeral runs, which get one archive entry each), so entries key off a
+// running sequence rather than just a timestamp to stay collision-free within the same ms.
+let historyEntrySeq = 0;
+function nextHistoryEntryId(nodeId: string): string {
+  historyEntrySeq += 1;
+  return `${nodeId}-hist-${historyEntrySeq}`;
+}
+
+// Feeds raw PTY input (individual keystrokes, pastes, or escape sequences from arrow/nav
+// keys) through a per-node line buffer and returns any lines completed (Enter pressed) by
+// this chunk. Deliberately not a full shell line-editor — CSI escape sequences (arrows,
+// home/end, etc.) are recognized just enough to be skipped rather than appended as garbage
+// characters, but this stays a simple "line submitted at time T" log, nothing more.
+function extractSubmittedLines(input: string, bufferRef: { current: string }): string[] {
+  const lines: string[] = [];
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i];
+    if (ch === "\x1b") {
+      // Skip CSI (ESC [ ... final-byte) / SS3 (ESC O <byte>) sequences, or a lone ESC.
+      i++;
+      if (input[i] === "[" || input[i] === "O") {
+        i++;
+        while (i < input.length && !/[A-Za-z~]/.test(input[i])) i++;
+        i++;
+      }
+      continue;
+    }
+    if (ch === "\r" || ch === "\n") {
+      lines.push(bufferRef.current);
+      bufferRef.current = "";
+      i++;
+      continue;
+    }
+    if (ch === "\x7f" || ch === "\b") {
+      bufferRef.current = bufferRef.current.slice(0, -1);
+      i++;
+      continue;
+    }
+    if (ch.charCodeAt(0) < 0x20 && ch !== "\t") {
+      i++;
+      continue;
+    }
+    bufferRef.current += ch;
+    i++;
+  }
+  return lines;
+}
+
 export default function TerminalNode({ node }: TerminalNodeProps) {
   const { id, data } = node;
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
+  const logTerminalCommand = useCanvasStore((state) => state.logTerminalCommand);
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const termInstance = useRef<Terminal | null>(null);
@@ -84,6 +135,9 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   // True once spawn_pty resolves, so a resize triggered before the PTY exists doesn't
   // invoke resize_pty against a session that isn't registered yet.
   const ptyReadyRef = useRef(false);
+  // Accumulates the current in-progress line typed by the user between Enter presses, so
+  // history entries can be logged one full line at a time rather than per keystroke.
+  const lineBufferRef = useRef("");
   const [ptyStatus, setPtyStatus] = useState<"idle" | "running" | "error">("idle");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -136,10 +190,24 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
       return true;
     });
 
-    // Send local keystrokes directly to the PTY
+    // Send local keystrokes directly to the PTY, logging each completed line (Enter
+    // pressed) to terminalRunHistory. Reads the node's current label from the store rather
+    // than closing over `data` (fixed at mount time) so a later rename is reflected.
     const onDataDisposable = term.onData((input) => {
       setPtyStatus("running");
       updateNodeData(id, { status: "running" });
+      for (const line of extractSubmittedLines(input, lineBufferRef)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const nodeLabel = useCanvasStore.getState().nodes.find((n) => n.id === id)?.data.label || "Terminal Console";
+        logTerminalCommand({
+          id: nextHistoryEntryId(id),
+          nodeId: id,
+          nodeLabel,
+          command: trimmed,
+          submittedAt: Date.now(),
+        });
+      }
       invoke("write_pty", { nodeId: id, data: input }).catch((err) => {
         console.error(err);
         setPtyStatus("error");
@@ -228,18 +296,28 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     if (searchOpen) searchInputRef.current?.focus();
   }, [searchOpen]);
 
-  // Sync execution triggers from canvasState
+  // Sync execution triggers from canvasState. This is the single place that logs a
+  // programmatic (Play button / cable-triggered) command to terminalRunHistory — it fires
+  // exactly once per isRunning:false->true transition, regardless of what set isRunning,
+  // so callers like handleRunCommand don't also need their own log call.
   useEffect(() => {
     if (data.isRunning && data.command) {
       setPtyStatus("running");
       const finalCommand = buildCommandWithContext(data.command, data);
+      logTerminalCommand({
+        id: nextHistoryEntryId(id),
+        nodeId: id,
+        nodeLabel: data.label || "Terminal Console",
+        command: data.command,
+        submittedAt: Date.now(),
+      });
       invoke("write_pty", { nodeId: id, data: finalCommand + "\r" }).catch((err) => {
         console.error(err);
         setPtyStatus("error");
         updateNodeData(id, { status: "error" });
       });
     }
-  }, [id, data.isRunning, data.command, updateNodeData]);
+  }, [id, data.isRunning, data.command, data.label, updateNodeData, logTerminalCommand]);
 
   const handleRunCommand = () => {
     if (data.command) {
