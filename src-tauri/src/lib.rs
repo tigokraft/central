@@ -1,10 +1,10 @@
-mod pty_manager;
-mod graph_runner;
-mod git_engine;
 mod ephemeral;
+mod git_engine;
+mod graph_runner;
 mod mcp;
-mod project;
 pub mod memory;
+mod project;
+mod pty_manager;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -17,7 +17,10 @@ use std::sync::Mutex;
 pub struct ProjectState(pub Mutex<Option<PathBuf>>);
 
 #[tauri::command]
-fn set_active_project_path(path: String, state: tauri::State<'_, ProjectState>) -> Result<(), String> {
+fn set_active_project_path(
+    path: String,
+    state: tauri::State<'_, ProjectState>,
+) -> Result<(), String> {
     *state.0.lock().unwrap() = Some(PathBuf::from(path));
     Ok(())
 }

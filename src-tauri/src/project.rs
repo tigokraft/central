@@ -17,15 +17,29 @@ pub struct ProjectMeta {
 }
 
 fn now_millis() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn sanitize_id(id: &str) -> String {
-    id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect()
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 fn projects_root(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map(|dir| dir.join("projects")).map_err(|e| e.to_string())
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("projects"))
+        .map_err(|e| e.to_string())
 }
 
 // --- Pure, AppHandle-free helpers (unit-testable against a tempdir root) ---
@@ -78,7 +92,11 @@ fn create_project_at(root: &Path, name: &str) -> Result<ProjectMeta, String> {
     Ok(meta)
 }
 
-fn save_project_graph_at(root: &Path, project_id: &str, graph: &serde_json::Value) -> Result<(), String> {
+fn save_project_graph_at(
+    root: &Path,
+    project_id: &str,
+    graph: &serde_json::Value,
+) -> Result<(), String> {
     let dir = project_dir_at(root, project_id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let raw = serde_json::to_string(graph).map_err(|e| e.to_string())?;
@@ -93,7 +111,10 @@ fn save_project_graph_at(root: &Path, project_id: &str, graph: &serde_json::Valu
     Ok(())
 }
 
-fn load_project_graph_at(root: &Path, project_id: &str) -> Result<Option<serde_json::Value>, String> {
+fn load_project_graph_at(
+    root: &Path,
+    project_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
     let path = graph_path_at(root, project_id);
     if !path.exists() {
         return Ok(None);
@@ -115,12 +136,19 @@ pub fn create_project(name: String, app: AppHandle) -> Result<ProjectMeta, Strin
 }
 
 #[tauri::command]
-pub fn save_project_graph(project_id: String, graph: serde_json::Value, app: AppHandle) -> Result<(), String> {
+pub fn save_project_graph(
+    project_id: String,
+    graph: serde_json::Value,
+    app: AppHandle,
+) -> Result<(), String> {
     save_project_graph_at(&projects_root(&app)?, &project_id, &graph)
 }
 
 #[tauri::command]
-pub fn load_project_graph(project_id: String, app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+pub fn load_project_graph(
+    project_id: String,
+    app: AppHandle,
+) -> Result<Option<serde_json::Value>, String> {
     load_project_graph_at(&projects_root(&app)?, &project_id)
 }
 
@@ -133,7 +161,11 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         let seq = TEST_SEQ.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("central-project-test-{}-{}", std::process::id(), seq));
+        let dir = std::env::temp_dir().join(format!(
+            "central-project-test-{}-{}",
+            std::process::id(),
+            seq
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

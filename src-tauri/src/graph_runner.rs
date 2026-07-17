@@ -128,7 +128,10 @@ fn build_context(
 ) -> Result<Arc<ExecutionContext>, String> {
     let (graph, index_of) = build_graph(&nodes, &edges)?;
 
-    let node_locks = nodes.iter().map(|n| (n.id.clone(), TokioMutex::new(()))).collect();
+    let node_locks = nodes
+        .iter()
+        .map(|n| (n.id.clone(), TokioMutex::new(())))
+        .collect();
     let node_of: HashMap<String, GraphNodeInput> =
         nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
 
@@ -169,10 +172,23 @@ pub fn execute_graph(
     tauri::async_runtime::spawn(async move {
         let result = run_graph(ctx).await;
         let event = match &result {
-            Ok(()) => GraphEventPayload { ok: true, message: None },
-            Err(e) => GraphEventPayload { ok: false, message: Some(e.clone()) },
+            Ok(()) => GraphEventPayload {
+                ok: true,
+                message: None,
+            },
+            Err(e) => GraphEventPayload {
+                ok: false,
+                message: Some(e.clone()),
+            },
         };
-        let _ = app_handle.emit(if result.is_ok() { "graph-complete" } else { "graph-error" }, event);
+        let _ = app_handle.emit(
+            if result.is_ok() {
+                "graph-complete"
+            } else {
+                "graph-error"
+            },
+            event,
+        );
         running_flag.store(false, Ordering::SeqCst);
     });
 
@@ -181,7 +197,9 @@ pub fn execute_graph(
 
 async fn run_graph(ctx: Arc<ExecutionContext>) -> Result<(), String> {
     let all_ids: Vec<String> = ctx.node_of.keys().cloned().collect();
-    ctx.app.state::<GitEngineState>().prepare_run(&ctx.working_dir, &all_ids);
+    ctx.app
+        .state::<GitEngineState>()
+        .prepare_run(&ctx.working_dir, &all_ids);
 
     let mut completed: HashSet<String> = HashSet::new();
 
@@ -255,7 +273,10 @@ async fn execute_with_retries(ctx: &Arc<ExecutionContext>, node_id: &str) -> Res
                 node_id: node_id.to_string(),
                 message: Some(format!(
                     "Executing {}",
-                    node.data.label.clone().unwrap_or_else(|| node_id.to_string())
+                    node.data
+                        .label
+                        .clone()
+                        .unwrap_or_else(|| node_id.to_string())
                 )),
                 output: None,
                 exit_code: None,
@@ -268,7 +289,10 @@ async fn execute_with_retries(ctx: &Arc<ExecutionContext>, node_id: &str) -> Res
 
         match exec_result {
             Ok((output, 0)) => {
-                ctx.outputs.lock().await.insert(node_id.to_string(), output.clone());
+                ctx.outputs
+                    .lock()
+                    .await
+                    .insert(node_id.to_string(), output.clone());
                 emit_event(
                     &ctx.app,
                     "node-success",
@@ -289,9 +313,12 @@ async fn execute_with_retries(ctx: &Arc<ExecutionContext>, node_id: &str) -> Res
                     let mut counts = ctx.retry_counts.lock().await;
                     let used = counts.entry(node_id.to_string()).or_insert(0);
                     if *used < max_retries {
-                        if let Some(coder_id) =
-                            find_nearest_coder_ancestor(&ctx.graph, &ctx.index_of, &ctx.node_of, node_id)
-                        {
+                        if let Some(coder_id) = find_nearest_coder_ancestor(
+                            &ctx.graph,
+                            &ctx.index_of,
+                            &ctx.node_of,
+                            node_id,
+                        ) {
                             *used += 1;
                             let retry_count = *used;
                             drop(counts);
@@ -327,7 +354,10 @@ async fn execute_with_retries(ctx: &Arc<ExecutionContext>, node_id: &str) -> Res
                         max_retries: Some(max_retries),
                     },
                 );
-                return Err(format!("Node '{}' failed with exit code {}", node_id, exit_code));
+                return Err(format!(
+                    "Node '{}' failed with exit code {}",
+                    node_id, exit_code
+                ));
             }
             Err(e) => {
                 emit_event(
@@ -436,7 +466,8 @@ async fn run_action_container(
 
     let mut combined_output = String::new();
     for action in actions {
-        let (out, code) = run_shell_command(ctx, node_id, &action, input_context, &exec_dir).await?;
+        let (out, code) =
+            run_shell_command(ctx, node_id, &action, input_context, &exec_dir).await?;
         combined_output.push_str(&format!("$ {}\n{}\n", action, out));
         if code != 0 {
             return Ok((combined_output, code));
@@ -458,7 +489,9 @@ fn resolve_exec_dir(ctx: &Arc<ExecutionContext>, node_id: &str) -> PathBuf {
 // Commits any pending edits in a node's sandbox worktree and emits a "cable-handoff" event
 // carrying diff stats for every downstream reviewer/test node, before that node runs.
 fn perform_handoffs(ctx: &Arc<ExecutionContext>, node_id: &str) {
-    let Some(&idx) = ctx.index_of.get(node_id) else { return };
+    let Some(&idx) = ctx.index_of.get(node_id) else {
+        return;
+    };
     let git_state = ctx.app.state::<GitEngineState>();
 
     for target_idx in ctx.graph.neighbors_directed(idx, Direction::Outgoing) {
@@ -506,7 +539,14 @@ async fn run_shell_command(
     input_context: &str,
     working_dir: &Path,
 ) -> Result<(String, i32), String> {
-    run_shell_command_raw(&ctx.app, node_id, command, working_dir, &[("CENTRAL_PIPELINE_INPUT", input_context)]).await
+    run_shell_command_raw(
+        &ctx.app,
+        node_id,
+        command,
+        working_dir,
+        &[("CENTRAL_PIPELINE_INPUT", input_context)],
+    )
+    .await
 }
 
 // Runs a shell command with live output streaming, independent of any graph ExecutionContext.
@@ -535,8 +575,18 @@ pub(crate) async fn run_shell_command_raw(
 
     let collected = Arc::new(TokioMutex::new(String::new()));
 
-    let stdout_task = tokio::spawn(stream_lines(app.clone(), node_id.to_string(), stdout, collected.clone()));
-    let stderr_task = tokio::spawn(stream_lines(app.clone(), node_id.to_string(), stderr, collected.clone()));
+    let stdout_task = tokio::spawn(stream_lines(
+        app.clone(),
+        node_id.to_string(),
+        stdout,
+        collected.clone(),
+    ));
+    let stderr_task = tokio::spawn(stream_lines(
+        app.clone(),
+        node_id.to_string(),
+        stderr,
+        collected.clone(),
+    ));
 
     let status = child
         .wait()
@@ -660,12 +710,19 @@ mod tests {
     }
 
     fn edge(source: &str, target: &str) -> GraphEdgeInput {
-        GraphEdgeInput { source: source.to_string(), target: target.to_string() }
+        GraphEdgeInput {
+            source: source.to_string(),
+            target: target.to_string(),
+        }
     }
 
     #[test]
     fn build_graph_accepts_valid_dag() {
-        let nodes = vec![node("prompt-1", "promptNode"), node("action-1", "actionContainerNode"), node("terminal-1", "terminalNode")];
+        let nodes = vec![
+            node("prompt-1", "promptNode"),
+            node("action-1", "actionContainerNode"),
+            node("terminal-1", "terminalNode"),
+        ];
         let edges = vec![edge("prompt-1", "action-1"), edge("action-1", "terminal-1")];
         let (graph, index_of) = build_graph(&nodes, &edges).expect("valid DAG should build");
         assert_eq!(graph.node_count(), 3);
@@ -682,10 +739,14 @@ mod tests {
 
     #[test]
     fn finds_direct_coder_ancestor() {
-        let nodes = vec![node("prompt-1", "promptNode"), node("action-1", "actionContainerNode")];
+        let nodes = vec![
+            node("prompt-1", "promptNode"),
+            node("action-1", "actionContainerNode"),
+        ];
         let edges = vec![edge("prompt-1", "action-1")];
         let (graph, index_of) = build_graph(&nodes, &edges).unwrap();
-        let node_of: HashMap<String, GraphNodeInput> = nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+        let node_of: HashMap<String, GraphNodeInput> =
+            nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
 
         let ancestor = find_nearest_coder_ancestor(&graph, &index_of, &node_of, "action-1");
         assert_eq!(ancestor, Some("prompt-1".to_string()));
@@ -700,9 +761,14 @@ mod tests {
             node("action-1", "actionContainerNode"),
             node("terminal-1", "terminalNode"),
         ];
-        let edges = vec![edge("prompt-1", "memory-1"), edge("memory-1", "action-1"), edge("action-1", "terminal-1")];
+        let edges = vec![
+            edge("prompt-1", "memory-1"),
+            edge("memory-1", "action-1"),
+            edge("action-1", "terminal-1"),
+        ];
         let (graph, index_of) = build_graph(&nodes, &edges).unwrap();
-        let node_of: HashMap<String, GraphNodeInput> = nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+        let node_of: HashMap<String, GraphNodeInput> =
+            nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
 
         let ancestor = find_nearest_coder_ancestor(&graph, &index_of, &node_of, "terminal-1");
         assert_eq!(ancestor, Some("prompt-1".to_string()));
@@ -710,10 +776,14 @@ mod tests {
 
     #[test]
     fn returns_none_when_no_coder_ancestor_exists() {
-        let nodes = vec![node("action-1", "actionContainerNode"), node("terminal-1", "terminalNode")];
+        let nodes = vec![
+            node("action-1", "actionContainerNode"),
+            node("terminal-1", "terminalNode"),
+        ];
         let edges = vec![edge("action-1", "terminal-1")];
         let (graph, index_of) = build_graph(&nodes, &edges).unwrap();
-        let node_of: HashMap<String, GraphNodeInput> = nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+        let node_of: HashMap<String, GraphNodeInput> =
+            nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
 
         let ancestor = find_nearest_coder_ancestor(&graph, &index_of, &node_of, "terminal-1");
         assert_eq!(ancestor, None);
@@ -728,9 +798,14 @@ mod tests {
             node("inner-coder", "promptNode"),
             node("check", "terminalNode"),
         ];
-        let edges = vec![edge("outer-coder", "bridge"), edge("bridge", "check"), edge("inner-coder", "check")];
+        let edges = vec![
+            edge("outer-coder", "bridge"),
+            edge("bridge", "check"),
+            edge("inner-coder", "check"),
+        ];
         let (graph, index_of) = build_graph(&nodes, &edges).unwrap();
-        let node_of: HashMap<String, GraphNodeInput> = nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+        let node_of: HashMap<String, GraphNodeInput> =
+            nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
 
         let ancestor = find_nearest_coder_ancestor(&graph, &index_of, &node_of, "check");
         assert_eq!(ancestor, Some("inner-coder".to_string()));

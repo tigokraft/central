@@ -35,17 +35,36 @@ pub async fn mcp_connect_server(
     app: AppHandle,
     state: State<'_, McpManagerState>,
 ) -> Result<McpConnectResult, String> {
-    let client = McpClient::spawn(server_id.clone(), command, args, env.unwrap_or_default(), app).await?;
+    let client = McpClient::spawn(
+        server_id.clone(),
+        command,
+        args,
+        env.unwrap_or_default(),
+        app,
+    )
+    .await?;
     let (name, version) = client.initialize().await?;
     let tools = client.list_tools().await.unwrap_or_default();
 
-    state.clients.lock().await.insert(server_id.clone(), Arc::new(client));
+    state
+        .clients
+        .lock()
+        .await
+        .insert(server_id.clone(), Arc::new(client));
 
-    Ok(McpConnectResult { server_id, name, version, tools })
+    Ok(McpConnectResult {
+        server_id,
+        name,
+        version,
+        tools,
+    })
 }
 
 #[tauri::command]
-pub async fn mcp_disconnect_server(server_id: String, state: State<'_, McpManagerState>) -> Result<(), String> {
+pub async fn mcp_disconnect_server(
+    server_id: String,
+    state: State<'_, McpManagerState>,
+) -> Result<(), String> {
     let client = state.clients.lock().await.remove(&server_id);
     if let Some(client) = client {
         client.shutdown().await;
@@ -54,7 +73,10 @@ pub async fn mcp_disconnect_server(server_id: String, state: State<'_, McpManage
 }
 
 #[tauri::command]
-pub async fn mcp_list_tools(server_id: String, state: State<'_, McpManagerState>) -> Result<Vec<McpTool>, String> {
+pub async fn mcp_list_tools(
+    server_id: String,
+    state: State<'_, McpManagerState>,
+) -> Result<Vec<McpTool>, String> {
     let client = state
         .clients
         .lock()
@@ -79,11 +101,24 @@ pub async fn mcp_call_tool(
         .get(&server_id)
         .cloned()
         .ok_or_else(|| format!("No connected MCP server '{}'", server_id))?;
-    client.call_tool(&tool_name, arguments.unwrap_or(Value::Object(Default::default()))).await
+    client
+        .call_tool(
+            &tool_name,
+            arguments.unwrap_or(Value::Object(Default::default())),
+        )
+        .await
 }
 
 #[tauri::command]
-pub async fn mcp_list_servers(state: State<'_, McpManagerState>) -> Result<Vec<McpServerStatus>, String> {
+pub async fn mcp_list_servers(
+    state: State<'_, McpManagerState>,
+) -> Result<Vec<McpServerStatus>, String> {
     let clients = state.clients.lock().await;
-    Ok(clients.keys().map(|id| McpServerStatus { server_id: id.clone(), connected: true }).collect())
+    Ok(clients
+        .keys()
+        .map(|id| McpServerStatus {
+            server_id: id.clone(),
+            connected: true,
+        })
+        .collect())
 }

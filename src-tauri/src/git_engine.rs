@@ -53,12 +53,21 @@ static WORKTREE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn sanitize(id: &str) -> String {
     id.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
 fn timestamp_millis() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 fn head_commit_sha(repo_path: &Path) -> Option<String> {
@@ -121,12 +130,17 @@ impl GitEngineState {
         std::fs::create_dir_all(&wt_root).map_err(|e| e.to_string())?;
         let wt_path = wt_root.join(&worktree_name);
 
-        repo.worktree(&worktree_name, &wt_path, None).map_err(|e| e.to_string())?;
+        repo.worktree(&worktree_name, &wt_path, None)
+            .map_err(|e| e.to_string())?;
 
         let mut worktrees = self.worktrees.lock().unwrap();
         worktrees.insert(
             node_id.to_string(),
-            WorktreeHandle { worktree_name, path: wt_path.clone(), base_commit },
+            WorktreeHandle {
+                worktree_name,
+                path: wt_path.clone(),
+                base_commit,
+            },
         );
         Ok(wt_path)
     }
@@ -142,7 +156,11 @@ impl GitEngineState {
         let (worktree_name, path, base_commit) = {
             let worktrees = self.worktrees.lock().unwrap();
             match worktrees.get(node_id) {
-                Some(h) => (h.worktree_name.clone(), h.path.clone(), h.base_commit.clone()),
+                Some(h) => (
+                    h.worktree_name.clone(),
+                    h.path.clone(),
+                    h.base_commit.clone(),
+                ),
                 None => return Ok(None),
             }
         };
@@ -157,7 +175,10 @@ impl GitEngineState {
         index.write().map_err(|e| e.to_string())?;
 
         let base_oid = Oid::from_str(&base_commit).map_err(|e| e.to_string())?;
-        let base_tree = repo.find_commit(base_oid).and_then(|c| c.tree()).map_err(|e| e.to_string())?;
+        let base_tree = repo
+            .find_commit(base_oid)
+            .and_then(|c| c.tree())
+            .map_err(|e| e.to_string())?;
         let new_tree_oid = index.write_tree().map_err(|e| e.to_string())?;
         let new_tree = repo.find_tree(new_tree_oid).map_err(|e| e.to_string())?;
 
@@ -174,7 +195,10 @@ impl GitEngineState {
             .signature()
             .or_else(|_| Signature::now("Central Agent", "agent@central.local"))
             .map_err(|e| e.to_string())?;
-        let parent = repo.head().and_then(|h| h.peel_to_commit()).map_err(|e| e.to_string())?;
+        let parent = repo
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map_err(|e| e.to_string())?;
         let message = format!("Agent Hand-off: {}", node_id);
         let commit_oid = repo
             .commit(Some("HEAD"), &sig, &sig, &message, &new_tree, &[&parent])
@@ -196,7 +220,8 @@ impl GitEngineState {
         worktrees
             .iter()
             .map(|(node_id, handle)| {
-                let head_commit = head_commit_sha(&handle.path).unwrap_or_else(|| handle.base_commit.clone());
+                let head_commit =
+                    head_commit_sha(&handle.path).unwrap_or_else(|| handle.base_commit.clone());
                 WorktreeInfo {
                     node_id: node_id.clone(),
                     worktree_name: handle.worktree_name.clone(),
@@ -224,12 +249,15 @@ impl GitEngineState {
         let repo = Repository::open(&path).map_err(|e| e.to_string())?;
         let base_oid = Oid::from_str(&base_commit).map_err(|e| e.to_string())?;
         let commit = repo.find_commit(base_oid).map_err(|e| e.to_string())?;
-        repo.reset(commit.as_object(), ResetType::Hard, None).map_err(|e| e.to_string())?;
+        repo.reset(commit.as_object(), ResetType::Hard, None)
+            .map_err(|e| e.to_string())?;
 
         // `reset --hard` only rewinds tracked files; new files an agent created are
         // untracked, so sweep those away too to fully restore the base node state.
         let mut status_opts = git2::StatusOptions::new();
-        status_opts.include_untracked(true).recurse_untracked_dirs(true);
+        status_opts
+            .include_untracked(true)
+            .recurse_untracked_dirs(true);
         if let Ok(statuses) = repo.statuses(Some(&mut status_opts)) {
             for entry in statuses.iter() {
                 if entry.status().contains(git2::Status::WT_NEW) {
@@ -268,7 +296,11 @@ pub fn resolve_repo_root(app: &AppHandle) -> PathBuf {
 }
 
 fn active_project_path(app: &AppHandle) -> Option<PathBuf> {
-    app.try_state::<crate::ProjectState>()?.0.lock().unwrap().clone()
+    app.try_state::<crate::ProjectState>()?
+        .0
+        .lock()
+        .unwrap()
+        .clone()
 }
 
 // Pure and AppHandle-free so the override-vs-fallback branching can be unit tested directly.
@@ -290,7 +322,10 @@ pub fn get_repo_head(app: AppHandle) -> Result<RepoHeadInfo, String> {
     let head = repo.head().map_err(|e| e.to_string())?;
     let branch = head.shorthand().unwrap_or("HEAD").to_string();
     let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
-    Ok(RepoHeadInfo { branch, commit_sha: commit.id().to_string() })
+    Ok(RepoHeadInfo {
+        branch,
+        commit_sha: commit.id().to_string(),
+    })
 }
 
 /// Renders the working tree's pending changes (staged + unstaged, against HEAD) as a unified
@@ -298,7 +333,10 @@ pub fn get_repo_head(app: AppHandle) -> Result<RepoHeadInfo, String> {
 #[tauri::command]
 pub fn get_git_diff(app: AppHandle) -> Result<String, String> {
     let repo = Repository::open(resolve_repo_root(&app)).map_err(|e| e.to_string())?;
-    let head_tree = repo.head().and_then(|h| h.peel_to_tree()).map_err(|e| e.to_string())?;
+    let head_tree = repo
+        .head()
+        .and_then(|h| h.peel_to_tree())
+        .map_err(|e| e.to_string())?;
     let diff = repo
         .diff_tree_to_workdir_with_index(Some(&head_tree), None)
         .map_err(|e| e.to_string())?;
@@ -338,7 +376,11 @@ mod tests {
     // without needing a shared fixture or an external tempfile crate dependency.
     fn init_test_repo() -> PathBuf {
         let seq = TEST_SEQ.fetch_add(1, TestOrdering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("central-git-engine-test-{}-{}", std::process::id(), seq));
+        let dir = std::env::temp_dir().join(format!(
+            "central-git-engine-test-{}-{}",
+            std::process::id(),
+            seq
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -351,7 +393,8 @@ mod tests {
         let tree_oid = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_oid).unwrap();
         let sig = Signature::now("Test", "test@example.com").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[]).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[])
+            .unwrap();
 
         dir
     }
