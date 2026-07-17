@@ -1,6 +1,6 @@
 import { useRef, useEffect } from "react";
 import { useDrag } from "@use-gesture/react";
-import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
+import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../store/canvasStore";
 
 interface CanvasNodeWrapperProps {
   node: CanvasNode;
@@ -45,7 +45,10 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
         const widthDiff = Math.abs(storeNode.width - width);
         const heightDiff = Math.abs(storeNode.height - height);
         
-        // Update dimensions if they deviate significantly
+        // Update dimensions if they deviate significantly. This is a layout measurement,
+        // not a user action — it's never wrapped in beginHistoryBatch/endHistoryBatch, and
+        // since automatic per-set() history tracking is permanently disabled (see
+        // canvasStore.ts), it simply never touches the undo stack.
         if (widthDiff > 1.5 || heightDiff > 1.5) {
           // Dynamic heights apply to Prompt, Terminal, and Memory cards
           if (!isContainer) {
@@ -88,6 +91,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
       }
 
       if (first) {
+        beginHistoryBatch();
         const selected = useCanvasStore.getState().selectedNodeIds;
         if (!selected.includes(node.id)) {
           if ((event as MouseEvent).shiftKey) {
@@ -117,6 +121,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
           });
         }
         reparentNode(node.id);
+        endHistoryBatch();
       }
     },
     {

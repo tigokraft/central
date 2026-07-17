@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useDrag } from "@use-gesture/react";
 import { Frame as FrameIcon } from "lucide-react";
-import { useCanvasStore, CanvasNode } from "../../../store/canvasStore";
+import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
 
 interface ActionFrameNodeProps {
   node: CanvasNode;
@@ -19,19 +19,23 @@ export default function ActionFrameNode({ node }: ActionFrameNodeProps) {
   const [titleText, setTitleText] = useState(data.label || "Action Frame");
 
   const bindResize = useDrag(
-    ({ delta: [dx, dy], event }) => {
+    ({ delta: [dx, dy], first, last, event }) => {
       event.stopPropagation();
+      if (first) beginHistoryBatch();
       const zoom = useCanvasStore.getState().viewport.zoom;
       const nextWidth = Math.max(320, node.width + dx / zoom);
       const nextHeight = Math.max(200, node.height + dy / zoom);
       updateNodeDimensions(id, nextWidth, nextHeight);
+      if (last) endHistoryBatch();
     },
     { pointer: { capture: false } }
   );
 
   const handleTitleSubmit = () => {
     setIsEditingTitle(false);
+    beginHistoryBatch();
     updateNodeData(id, { label: titleText });
+    endHistoryBatch();
   };
 
   return (

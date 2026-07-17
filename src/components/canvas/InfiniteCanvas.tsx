@@ -7,7 +7,7 @@ import {
   Brain,
   Frame as FrameIcon
 } from "lucide-react";
-import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
+import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../store/canvasStore";
 import { getViewportBounds, isRectVisible } from "../../lib/canvasGeometry";
 import SVGEdgeLayer from "./SVGEdgeLayer";
 import CanvasNodeWrapper from "./CanvasNodeWrapper";
@@ -117,7 +117,13 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         setIsSpaceActive(true);
       }
 
-      if (e.key.toLowerCase() === "v") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        // Cmd/Ctrl+Z to undo, Cmd/Ctrl+Shift+Z to redo
+        e.preventDefault();
+        const temporal = useCanvasStore.temporal.getState();
+        if (e.shiftKey) temporal.redo();
+        else temporal.undo();
+      } else if (e.key.toLowerCase() === "v") {
         setActiveTool("select");
       } else if (e.key.toLowerCase() === "h") {
         setActiveTool("hand");
@@ -125,7 +131,9 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         setActiveTool("frame");
       } else if (e.key === "Backspace" || e.key === "Delete") {
         if (selectedNodeIds.length > 0) {
+          beginHistoryBatch();
           selectedNodeIds.forEach((id) => deleteNode(id));
+          endHistoryBatch();
           setSelectedNodeIds([]);
         }
       } else if (e.shiftKey && (e.key === "!" || e.key === "1")) {

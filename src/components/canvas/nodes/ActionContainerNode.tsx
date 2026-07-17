@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useDrag } from "@use-gesture/react";
 import { Box, Settings, ArrowRight, Plus, Trash2 } from "lucide-react";
-import { useCanvasStore, CanvasNode } from "../../../store/canvasStore";
+import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
 import Port from "../Port";
 import NodeToolbelt from "./NodeToolbelt";
 
@@ -22,12 +22,14 @@ export default function ActionContainerNode({ node }: ActionContainerNodeProps) 
 
   // Bind gesture for bottom-right corner resizing
   const bindResize = useDrag(
-    ({ delta: [dx, dy], event }) => {
+    ({ delta: [dx, dy], first, last, event }) => {
       event.stopPropagation();
+      if (first) beginHistoryBatch();
       const zoom = useCanvasStore.getState().viewport.zoom;
       const nextWidth = Math.max(250, node.width + dx / zoom);
       const nextHeight = Math.max(150, node.height + dy / zoom);
       updateNodeDimensions(id, nextWidth, nextHeight);
+      if (last) endHistoryBatch();
     },
     {
       pointer: { capture: false },
@@ -36,20 +38,26 @@ export default function ActionContainerNode({ node }: ActionContainerNodeProps) 
 
   const handleTitleSubmit = () => {
     setIsEditingTitle(false);
+    beginHistoryBatch();
     updateNodeData(id, { label: titleText });
+    endHistoryBatch();
   };
 
   const handleAddAction = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newActionText.trim()) return;
     const updatedActions = [...actionsList, newActionText.trim()];
+    beginHistoryBatch();
     updateNodeData(id, { actions: updatedActions });
+    endHistoryBatch();
     setNewActionText("");
   };
 
   const handleDeleteAction = (indexToDelete: number) => {
     const updatedActions = actionsList.filter((_, idx) => idx !== indexToDelete);
+    beginHistoryBatch();
     updateNodeData(id, { actions: updatedActions });
+    endHistoryBatch();
   };
 
   return (

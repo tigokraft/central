@@ -1,6 +1,9 @@
 import { create } from "zustand";
+import { temporal } from "zundo";
 import { invoke } from "@tauri-apps/api/core";
 import { computeFitViewport, getNodesBounds } from "../lib/canvasGeometry";
+
+const HISTORY_LIMIT = 100;
 
 // Monotonic counter guarantees unique node ids even when several nodes are created
 // synchronously within the same millisecond (e.g. the orchestrator dropping a full plan).
@@ -186,7 +189,9 @@ interface CanvasState {
   setSelectedNodeIds: (ids: string[]) => void;
 }
 
-export const useCanvasStore = create<CanvasState>((set, get) => ({
+export const useCanvasStore = create<CanvasState>()(
+  temporal(
+    (set, get) => ({
   selectedNodeIds: [],
   setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids }),
 
@@ -370,9 +375,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       data: { ...data, ...overrides?.data },
     };
 
+    beginHistoryBatch();
     set((state) => ({
       nodes: [...state.nodes, newNode],
     }));
+    endHistoryBatch();
 
     return id;
   },
@@ -413,6 +420,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ),
     })),
 
+  // Not wrapped in a history batch itself: this is called both for direct user edits (title
+  // renames, toggles) and for automatic system-driven updates (PTY status, streaming output,
+  // minimize state) that fire continuously and aren't meaningful undo steps. Call sites that
+  // represent a real user action wrap themselves in beginHistoryBatch()/endHistoryBatch().
   updateNodeData: (id, data) =>
     set((state) => ({
       nodes: state.nodes.map((n) =>
@@ -457,13 +468,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       };
     }),
 
-  deleteNode: (id) =>
+  deleteNode: (id) => {
+    beginHistoryBatch();
     set((state) => ({
       nodes: state.nodes.filter((n) => n.id !== id).map((n) => n.parentId === id ? { ...n, parentId: undefined } : n),
       edges: state.edges.filter((e) => e.source !== id && e.target !== id),
-    })),
+    }));
+    endHistoryBatch();
+  },
 
-  attachMcpTool: (nodeId, tool) =>
+  attachMcpTool: (nodeId, tool) => {
+    beginHistoryBatch();
     set((state) => ({
       nodes: state.nodes.map((n) => {
         if (n.id !== nodeId) return n;
@@ -471,9 +486,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (existing.some((t) => t.serverId === tool.serverId && t.toolName === tool.toolName)) return n;
         return { ...n, data: { ...n.data, attachedTools: [...existing, tool] } };
       }),
-    })),
+    }));
+    endHistoryBatch();
+  },
 
-  detachMcpTool: (nodeId, tool) =>
+  detachMcpTool: (nodeId, tool) => {
+    beginHistoryBatch();
     set((state) => ({
       nodes: state.nodes.map((n) => {
         if (n.id !== nodeId) return n;
@@ -486,7 +504,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           },
         };
       }),
-    })),
+    }));
+    endHistoryBatch();
+  },
 
   ephemeralArchive: [],
   archiveEphemeralRun: (entry) =>
@@ -494,7 +514,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ephemeralArchive: [entry, ...state.ephemeralArchive].slice(0, 30),
     })),
 
-  addEdge: (sourceId, sourceHandle, targetId, targetHandle) =>
+  addEdge: (sourceId, sourceHandle, targetId, targetHandle) => {
+    beginHistoryBatch();
     set((state) => {
       // Prevent duplicate edges
       const exists = state.edges.some(
@@ -538,9 +559,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes,
         edges: [...state.edges, newEdge],
       };
-    }),
+    });
+    endHistoryBatch();
+  },
 
-  deleteEdge: (id) =>
+  deleteEdge: (id) => {
+    beginHistoryBatch();
     set((state) => {
       const removed = state.edges.find((e) => e.id === id);
       const nodes =
@@ -564,7 +588,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes,
         edges: state.edges.filter((e) => e.id !== id),
       };
-    }),
+    });
+    endHistoryBatch();
+  },
 
   startDraggingEdge: (sourceId, sourceHandle, x, y) =>
     set({
@@ -581,6 +607,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   stopDraggingEdge: () => set({ draggingEdge: null }),
 
   loadPreset: (presetName) => {
+    beginHistoryBatch();
     if (presetName === "Code Loop") {
       set({
         nodes: [
@@ -702,6 +729,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ],
       });
     }
+    endHistoryBatch();
   },
 
   runPipeline: async () => {
@@ -755,4 +783,53 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     })),
 
   setPipelineRunning: (running) => set({ isPipelineRunning: running }),
-}));
+    }),
+    {
+      // Only nodes/edges are undoable — viewport, selection, drag state, and execution
+      // status are transient/derived and would just add noise to the history stack.
+      partialize: (state) => ({ nodes: state.nodes, edges: state.edges }),
+      limit: HISTORY_LIMIT,
+    }
+  )
+);
+
+// zundo's automatic per-set() tracking is deliberately disabled here (see below) — every
+// action in this store rebuilds `nodes`/`edges` via .map()/spread even when nothing
+// relevant actually changed (e.g. a no-op reparent), so array-reference equality can't
+// reliably distinguish "real change" from "no-op" at that layer. Instead, every store
+// action that should be undoable explicitly wraps its mutation in
+// beginHistoryBatch()/endHistoryBatch(), which snapshots nodes/edges before and after and
+// pushes exactly one manual history entry if — and only if — they actually differ. This
+// also naturally collapses a whole drag/resize gesture (many intermediate updates) into a
+// single undo step instead of one entry per pointer-move.
+useCanvasStore.temporal.getState().pause();
+
+let pendingBatchSnapshot: { nodes: CanvasNode[]; edges: CanvasEdge[] } | null = null;
+let batchDepth = 0;
+
+export function beginHistoryBatch() {
+  // Nested calls (e.g. an action that itself calls another undoable action) collapse into
+  // the outermost batch instead of overwriting its snapshot or double-pushing on exit.
+  if (batchDepth === 0) {
+    const { nodes, edges } = useCanvasStore.getState();
+    pendingBatchSnapshot = { nodes, edges };
+  }
+  batchDepth++;
+}
+
+export function endHistoryBatch() {
+  batchDepth = Math.max(0, batchDepth - 1);
+  if (batchDepth > 0) return;
+
+  const pre = pendingBatchSnapshot;
+  pendingBatchSnapshot = null;
+  if (!pre) return;
+
+  const { nodes, edges } = useCanvasStore.getState();
+  if (pre.nodes === nodes && pre.edges === edges) return; // nothing actually changed
+
+  useCanvasStore.temporal.setState((s) => ({
+    pastStates: [...s.pastStates, pre].slice(-HISTORY_LIMIT),
+    futureStates: [],
+  }));
+}

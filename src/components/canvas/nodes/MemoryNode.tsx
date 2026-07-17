@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Brain, Search, Link as LinkIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useCanvasStore, CanvasNode } from "../../../store/canvasStore";
+import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
 import Port from "../Port";
 import { MemoryRecord } from "../../../types/memory";
 
@@ -57,8 +57,10 @@ export default function MemoryNode({ node }: MemoryNodeProps) {
       
       // Update local node state just to show something
       const updatedFacts = [...activeFacts, "New memory created!"];
+      beginHistoryBatch();
       updateNodeData(id, { facts: updatedFacts });
-      
+      endHistoryBatch();
+
     } catch (error) {
       console.error("Failed to create memory record:", error);
     }

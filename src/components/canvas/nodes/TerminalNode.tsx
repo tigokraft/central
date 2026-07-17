@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCanvasStore, CanvasNode } from "../../../store/canvasStore";
+import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
 import Port from "../Port";
 
 // Import xterm CSS styles so that it renders properly
@@ -222,9 +222,11 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   };
 
   const handleToggleContextMode = () => {
+    beginHistoryBatch();
     updateNodeData(id, {
       contextMode: data.contextMode === "memory-aware" ? "isolated" : "memory-aware",
     });
+    endHistoryBatch();
   };
 
   // Reads the working tree diff over Tauri IPC and pastes it into the terminal's stdin via
@@ -256,9 +258,11 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
       const [latest] = facts;
       const existing = data.attachedFacts || [];
       if (existing.some((f) => f.id === latest.id)) return;
+      beginHistoryBatch();
       updateNodeData(id, {
         attachedFacts: [...existing, { id: latest.id, content: latest.content }],
       });
+      endHistoryBatch();
     } catch (err) {
       console.error("Failed to attach .aimem fact:", err);
     }
@@ -269,6 +273,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   };
 
   const handleToggleMinimize = () => {
+    beginHistoryBatch();
     if (data.minimized) {
       updateNodeDimensions(id, node.width, preMinimizeHeightRef.current || 190);
       updateNodeData(id, { minimized: false });
@@ -277,16 +282,19 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
       updateNodeDimensions(id, node.width, MINIMIZED_HEIGHT);
       updateNodeData(id, { minimized: true });
     }
+    endHistoryBatch();
   };
 
   // Bottom-right corner drag handle, matching ActionContainerNode's resize affordance.
   const bindResize = useDrag(
-    ({ delta: [dx, dy], event }) => {
+    ({ delta: [dx, dy], first, last, event }) => {
       event.stopPropagation();
+      if (first) beginHistoryBatch();
       const zoom = useCanvasStore.getState().viewport.zoom;
       const nextWidth = Math.max(240, node.width + dx / zoom);
       const nextHeight = Math.max(120, node.height + dy / zoom);
       updateNodeDimensions(id, nextWidth, nextHeight);
+      if (last) endHistoryBatch();
     },
     {
       pointer: { capture: false },
