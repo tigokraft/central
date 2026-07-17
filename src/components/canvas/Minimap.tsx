@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useCanvasStore } from "../../store/canvasStore";
+import { getNodesBounds } from "../../lib/canvasGeometry";
 
 interface MinimapProps {
   containerWidth: number;
@@ -12,34 +13,19 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
 
   // Calculate the bounds of all nodes
   const bounds = useMemo(() => {
-    if (nodes.length === 0) {
+    const raw = getNodesBounds(nodes);
+    if (!raw) {
       return { minX: 0, minY: 0, maxX: 1000, maxY: 1000, width: 1000, height: 1000 };
     }
 
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    nodes.forEach((n) => {
-      minX = Math.min(minX, n.x);
-      minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + n.width);
-      maxY = Math.max(maxY, n.y + n.height);
-    });
-
     // Add padding around bounds
     const padding = 200;
-    minX -= padding;
-    minY -= padding;
-    maxX += padding;
-    maxY += padding;
+    const minX = raw.minX - padding;
+    const minY = raw.minY - padding;
+    const maxX = raw.maxX + padding;
+    const maxY = raw.maxY + padding;
 
-    // Ensure some minimum viewport bounds are shown
-    const width = maxX - minX;
-    const height = maxY - minY;
-
-    return { minX, minY, maxX, maxY, width, height };
+    return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
   }, [nodes]);
 
   // Map canvas coordinates to minimap coordinates (150x100 box)

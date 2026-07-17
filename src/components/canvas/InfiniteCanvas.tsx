@@ -55,6 +55,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const setSelectedNodeIds = useCanvasStore((state) => state.setSelectedNodeIds);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
+  const zoomToFit = useCanvasStore((state) => state.zoomToFit);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const spacePressed = useRef(false);
@@ -118,6 +119,14 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
           selectedNodeIds.forEach((id) => deleteNode(id));
           setSelectedNodeIds([]);
         }
+      } else if (e.shiftKey && (e.key === "!" || e.key === "1")) {
+        // Shift+1: zoom to fit everything (Figma convention)
+        e.preventDefault();
+        zoomToFit();
+      } else if (e.shiftKey && (e.key === "@" || e.key === "2")) {
+        // Shift+2: zoom to fit the current selection
+        e.preventDefault();
+        if (selectedNodeIds.length > 0) zoomToFit(selectedNodeIds);
       }
     };
 

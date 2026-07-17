@@ -38,11 +38,12 @@ export default function Toolbar() {
   const setActiveTool = useCanvasStore((state) => state.setActiveTool);
   const viewportZoom = useCanvasStore((state) => state.viewport.zoom);
   const zoomViewport = useCanvasStore((state) => state.zoomViewport);
-  const setViewport = useCanvasStore((state) => state.setViewport);
+  const zoomToFit = useCanvasStore((state) => state.zoomToFit);
+  const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const addNode = useCanvasStore((state) => state.addNode);
   const setSelectedNodeIds = useCanvasStore((state) => state.setSelectedNodeIds);
 
-  const resetView = () => setViewport({ x: 100, y: 100, zoom: 1 });
+  const resetView = () => zoomToFit(selectedNodeIds.length > 0 ? selectedNodeIds : undefined);
 
   // Drops a new terminal card pre-populated with the launcher's command, centered on the
   // last known cursor position over the canvas (or the viewport center if the cursor
@@ -142,7 +143,7 @@ export default function Toolbar() {
         </button>
         <button
           onClick={resetView}
-          title="Reset View"
+          title="Zoom to Fit (Shift+1)"
           className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
         >
           <Maximize size={14} />

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { computeFitViewport, getNodesBounds } from "../lib/canvasGeometry";
 
 // Monotonic counter guarantees unique node ids even when several nodes are created
 // synchronously within the same millisecond (e.g. the orchestrator dropping a full plan).
@@ -136,6 +137,7 @@ interface CanvasState {
   setViewport: (viewport: Partial<Viewport>) => void;
   panViewport: (dx: number, dy: number) => void;
   zoomViewport: (scale: number, mouseX?: number, mouseY?: number) => void;
+  zoomToFit: (nodeIds?: string[]) => void;
   setActiveTool: (tool: "select" | "hand" | "frame") => void;
   setPointerCanvasPosition: (x: number, y: number) => void;
   
@@ -289,6 +291,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         viewport: { ...state.viewport, zoom },
       };
     }),
+
+  // Frames the given nodes (or every node when nodeIds is omitted/empty) in the visible
+  // canvas area. Reads the live container rect rather than tracked dimensions state so it
+  // works from anywhere (Toolbar, Topbar, keyboard shortcuts) without prop-drilling.
+  zoomToFit: (nodeIds) => {
+    const state = get();
+    const targets =
+      nodeIds && nodeIds.length > 0 ? state.nodes.filter((n) => nodeIds.includes(n.id)) : state.nodes;
+    const bounds = getNodesBounds(targets);
+    if (!bounds) return;
+
+    const container = document.getElementById("canvas-container");
+    const rect = container?.getBoundingClientRect();
+    const width = rect?.width ?? window.innerWidth;
+    const height = rect?.height ?? window.innerHeight;
+
+    set({ viewport: computeFitViewport(bounds, width, height) });
+  },
 
   setActiveTool: (tool) => set({ activeTool: tool }),
 

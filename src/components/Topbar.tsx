@@ -11,12 +11,13 @@ interface TopbarProps {
 
 export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
   const zoomViewport = useCanvasStore((state) => state.zoomViewport);
-  const setViewport = useCanvasStore((state) => state.setViewport);
+  const zoomToFit = useCanvasStore((state) => state.zoomToFit);
+  const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const runPipeline = useCanvasStore((state) => state.runPipeline);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
 
   const resetView = () => {
-    setViewport({ x: 100, y: 100, zoom: 1 });
+    zoomToFit(selectedNodeIds.length > 0 ? selectedNodeIds : undefined);
   };
 
   return (
