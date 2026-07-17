@@ -143,6 +143,75 @@ interface Viewport {
   zoom: number;
 }
 
+// Starting graph handed to hydrateFromProject() when a brand-new project is created (see
+// HomeView's "New Project" flow). Not a permanent boot state — the store itself boots empty
+// since the app now lands on the Home view, not directly into a canvas.
+export const NEW_PROJECT_TEMPLATE: { nodes: CanvasNode[]; edges: CanvasEdge[]; viewport: Viewport } = {
+  nodes: [
+    {
+      id: "prompt-1",
+      type: "promptNode",
+      x: 100,
+      y: 200,
+      width: 320,
+      height: 150,
+      data: {
+        label: "Prompt Input",
+        prompt: "Refactor terminal rendering to support dynamic dimensions and automatic fit resizing.",
+      },
+    },
+    {
+      id: "action-1",
+      type: "actionContainerNode",
+      x: 500,
+      y: 150,
+      width: 340,
+      height: 240,
+      data: {
+        label: "Action Container Pipeline",
+        description: "Validation check and source formatting process pipeline.",
+        actions: [
+          "echo 'Lint passed'",
+          "echo 'Format check passed'",
+          "echo 'agent patch' > agent-patch.txt",
+          "echo 'Tests passed'",
+        ],
+      },
+    },
+    {
+      id: "terminal-1",
+      type: "terminalNode",
+      x: 920,
+      y: 170,
+      width: 320,
+      height: 190,
+      data: {
+        label: "Tauri Compiler Console",
+        command: "echo 'Build verified' && exit 0",
+        isRunning: false,
+        status: "idle",
+      },
+    },
+  ],
+  edges: [
+    {
+      id: "e-prompt-action",
+      source: "prompt-1",
+      sourceHandle: "output",
+      target: "action-1",
+      targetHandle: "input",
+    },
+    {
+      id: "e-action-terminal",
+      source: "action-1",
+      sourceHandle: "output",
+      target: "terminal-1",
+      targetHandle: "trigger",
+    },
+  ],
+  viewport: { x: 0, y: 0, zoom: 1 },
+};
+
 interface CanvasState {
   viewport: Viewport;
   nodes: CanvasNode[];
@@ -232,68 +301,8 @@ export const useCanvasStore = create<CanvasState>()(
   setDragGuides: (guides) => set({ dragGuides: guides }),
 
   viewport: { x: 0, y: 0, zoom: 1 },
-  nodes: [
-    {
-      id: "prompt-1",
-      type: "promptNode",
-      x: 100,
-      y: 200,
-      width: 320,
-      height: 150,
-      data: {
-        label: "Prompt Input",
-        prompt: "Refactor terminal rendering to support dynamic dimensions and automatic fit resizing.",
-      },
-    },
-    {
-      id: "action-1",
-      type: "actionContainerNode",
-      x: 500,
-      y: 150,
-      width: 340,
-      height: 240,
-      data: {
-        label: "Action Container Pipeline",
-        description: "Validation check and source formatting process pipeline.",
-        actions: [
-          "echo 'Lint passed'",
-          "echo 'Format check passed'",
-          "echo 'agent patch' > agent-patch.txt",
-          "echo 'Tests passed'",
-        ],
-      },
-    },
-    {
-      id: "terminal-1",
-      type: "terminalNode",
-      x: 920,
-      y: 170,
-      width: 320,
-      height: 190,
-      data: {
-        label: "Tauri Compiler Console",
-        command: "echo 'Build verified' && exit 0",
-        isRunning: false,
-        status: "idle",
-      },
-    },
-  ],
-  edges: [
-    {
-      id: "e-prompt-action",
-      source: "prompt-1",
-      sourceHandle: "output",
-      target: "action-1",
-      targetHandle: "input",
-    },
-    {
-      id: "e-action-terminal",
-      source: "action-1",
-      sourceHandle: "output",
-      target: "terminal-1",
-      targetHandle: "trigger",
-    },
-  ],
+  nodes: [],
+  edges: [],
   activeProjectId: null,
   activeTool: "select",
   draggingEdge: null,
