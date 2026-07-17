@@ -14,6 +14,7 @@ import SVGEdgeLayer from "./SVGEdgeLayer";
 import CanvasNodeWrapper from "./CanvasNodeWrapper";
 import Minimap from "./Minimap";
 import Toolbar from "./Toolbar";
+import CommandPalette from "../CommandPalette";
 
 // Nodes
 import TerminalNode from "./nodes/TerminalNode";
@@ -25,6 +26,7 @@ import EphemeralActionNode from "./nodes/EphemeralActionNode";
 
 interface InfiniteCanvasProps {
   showMinimap: boolean;
+  setShowMinimap: (show: boolean) => void;
 }
 
 interface NodeEventPayload {
@@ -97,7 +99,7 @@ function DragGuideLines({ viewBounds }: { viewBounds: Bounds }) {
   );
 }
 
-export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
+export default function InfiniteCanvas({ showMinimap, setShowMinimap }: InfiniteCanvasProps) {
   const nodes = useCanvasStore((state) => state.nodes);
   const activeTool = useCanvasStore((state) => state.activeTool);
   const setActiveTool = useCanvasStore((state) => state.setActiveTool);
@@ -137,6 +139,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const initialTransformStyle = useRef(computeTransformStyle(viewportController.getViewport())).current;
   const initialGridStyle = useRef(computeGridStyle(viewportController.getViewport())).current;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; canvasX: number; canvasY: number; type: "canvas" | "node"; nodeId?: string } | null>(null);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
 
   // Frame creation state
   const [frameDrawing, setFrameDrawing] = useState<{
@@ -189,6 +192,10 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
         const temporal = useCanvasStore.temporal.getState();
         if (e.shiftKey) temporal.redo();
         else temporal.undo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        // Cmd/Ctrl+K opens the command palette
+        e.preventDefault();
+        setIsPaletteOpen(true);
       } else if (e.key.toLowerCase() === "v") {
         setActiveTool("select");
       } else if (e.key.toLowerCase() === "h") {
@@ -768,6 +775,14 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
             </>
           )}
         </div>
+      )}
+
+      {/* Command Palette (Cmd/Ctrl+K) */}
+      {isPaletteOpen && (
+        <CommandPalette
+          onClose={() => setIsPaletteOpen(false)}
+          toggleMinimap={() => setShowMinimap(!showMinimap)}
+        />
       )}
 
       {/* Custom native Minimap */}
