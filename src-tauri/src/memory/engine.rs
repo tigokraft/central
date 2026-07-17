@@ -36,7 +36,7 @@ pub struct AimemFact {
 
 // Ensure the directories exist
 fn ensure_dirs() -> (PathBuf, PathBuf) {
-    let base = Path::new(".nodecode");
+    let base = Path::new(".central");
     let memory_dir = base.join("memory");
     let vault_dir = base.join("vault");
     
@@ -52,7 +52,7 @@ fn generate_embedding(text: &str) -> Vec<f32> {
 }
 
 async fn get_lancedb_connection() -> Result<Connection, String> {
-    let base = Path::new(".nodecode").join("lancedb");
+    let base = Path::new(".central").join("lancedb");
     lancedb::connect(base.to_str().unwrap()).execute().await.map_err(|e| e.to_string())
 }
 
@@ -195,7 +195,7 @@ pub async fn supersede_record(old_id: String, new_id: String) -> Result<(), Stri
 
 #[tauri::command]
 pub async fn export_to_obsidian() -> Result<(), String> {
-    println!("All files synced to .nodecode/vault/ successfully!");
+    println!("All files synced to .central/vault/ successfully!");
     Ok(())
 }
 

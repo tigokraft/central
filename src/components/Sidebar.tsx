@@ -48,8 +48,8 @@ export default function Sidebar({ onLoadPreset, activeProcesses }: SidebarProps)
       <div className="h-14 border-b border-slate-800 flex items-center gap-2.5 px-4 shrink-0 overflow-hidden">
         <Zap className="text-emerald-500 shrink-0" size={18} />
         {!isCollapsed && (
-          <span className="font-bold text-sm tracking-wider bg-gradient-to-r from-slate-100 to-slate-400 bg-clip-text text-transparent">
-            NODECODE
+          <span className="font-semibold text-sm tracking-wide text-slate-100">
+            Central
           </span>
         )}
       </div>
