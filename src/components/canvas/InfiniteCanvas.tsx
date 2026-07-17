@@ -15,6 +15,7 @@ import CanvasNodeWrapper from "./CanvasNodeWrapper";
 import Minimap from "./Minimap";
 import Toolbar from "./Toolbar";
 import CommandPalette from "../CommandPalette";
+import ShortcutsOverlay from "../ShortcutsOverlay";
 
 // Nodes
 import TerminalNode from "./nodes/TerminalNode";
@@ -140,6 +141,7 @@ export default function InfiniteCanvas({ showMinimap, setShowMinimap }: Infinite
   const initialGridStyle = useRef(computeGridStyle(viewportController.getViewport())).current;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; canvasX: number; canvasY: number; type: "canvas" | "node"; nodeId?: string } | null>(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
 
   // Frame creation state
   const [frameDrawing, setFrameDrawing] = useState<{
