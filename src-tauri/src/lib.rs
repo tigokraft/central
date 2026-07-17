@@ -5,6 +5,22 @@ mod ephemeral;
 mod mcp;
 pub mod memory;
 
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// Tracks the directory of whichever project is currently open in the UI. Every
+/// cwd-dependent backend call (terminals, git diff, memory records) resolves through
+/// this instead of the process's own working directory, so multiple projects can't
+/// bleed into each other. `None` means no project has been opened yet.
+#[derive(Default)]
+pub struct ProjectState(pub Mutex<Option<PathBuf>>);
+
+#[tauri::command]
+fn set_active_project_path(path: String, state: tauri::State<'_, ProjectState>) -> Result<(), String> {
+    *state.0.lock().unwrap() = Some(PathBuf::from(path));
+    Ok(())
+}
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -19,6 +35,7 @@ pub fn run() {
         .manage(graph_runner::GraphRunnerState::default())
         .manage(git_engine::GitEngineState::default())
         .manage(mcp::McpManagerState::default())
+        .manage(ProjectState::default())
         .setup(|app| {
             #[cfg(target_os = "windows")]
             {
@@ -31,6 +48,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            set_active_project_path,
             pty_manager::spawn_pty,
             pty_manager::write_pty,
             pty_manager::resize_pty,
