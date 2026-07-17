@@ -114,8 +114,27 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     term.open(terminalRef.current);
     fitAddon.fit();
 
+    const searchAddon = new SearchAddon();
+    term.loadAddon(searchAddon);
+
     termInstance.current = term;
     fitAddonRef.current = fitAddon;
+    searchAddonRef.current = searchAddon;
+
+    const onSearchResultsDisposable = searchAddon.onDidChangeResults((event) => {
+      setSearchResult(event);
+    });
+
+    // Intercepts Cmd/Ctrl+F before xterm's own key handling (and before it reaches the PTY),
+    // scoped to this terminal instance since it only fires while its own textarea has focus.
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type === "keydown" && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setSearchOpen(true);
+        return false;
+      }
+      return true;
+    });
 
     // Send local keystrokes directly to the PTY
     const onDataDisposable = term.onData((input) => {
@@ -176,6 +195,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     return () => {
       ptyReadyRef.current = false;
       onDataDisposable.dispose();
+      onSearchResultsDisposable.dispose();
       if (unlistenOutput) unlistenOutput();
       if (unlistenExit) unlistenExit();
       invoke("destroy_pty", { nodeId: id }).catch(console.error);
