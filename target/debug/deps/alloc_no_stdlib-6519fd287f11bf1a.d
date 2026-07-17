@@ -1,0 +1,10 @@
+/home/exxo/Documents/code/central/target/debug/deps/alloc_no_stdlib-6519fd287f11bf1a.d: /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/lib.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_memory/mod.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_memory/index_macro.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/stack_allocator.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_stack_memory.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/init.rs
+
+/home/exxo/Documents/code/central/target/debug/deps/liballoc_no_stdlib-6519fd287f11bf1a.rmeta: /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/lib.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_memory/mod.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_memory/index_macro.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/stack_allocator.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_stack_memory.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/init.rs
+
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/lib.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_memory/mod.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_memory/index_macro.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/stack_allocator.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/allocated_stack_memory.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloc-no-stdlib-2.0.4/src/init.rs:

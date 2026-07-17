@@ -1,0 +1,11 @@
+/home/exxo/Documents/code/central/target/debug/deps/symbolic_common-423cf83b9ffbff4c.d: /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/lib.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/byteview.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/cell.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/heuristics.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/path.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/sourcelinks.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/types.rs
+
+/home/exxo/Documents/code/central/target/debug/deps/libsymbolic_common-423cf83b9ffbff4c.rmeta: /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/lib.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/byteview.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/cell.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/heuristics.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/path.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/sourcelinks.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/types.rs
+
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/lib.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/byteview.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/cell.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/heuristics.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/path.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/sourcelinks.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/symbolic-common-12.18.3/src/types.rs:

@@ -1,0 +1,13 @@
+/home/exxo/Documents/code/central/target/debug/deps/snafu-3b9d8b652b9daea6.d: /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/lib.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/backtrace_impl_std.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/once_bool.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/error_chain.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/report.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/boxed_impls.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/whatever.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/Snafu.md /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/report.md
+
+/home/exxo/Documents/code/central/target/debug/deps/libsnafu-3b9d8b652b9daea6.rmeta: /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/lib.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/backtrace_impl_std.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/once_bool.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/error_chain.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/report.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/boxed_impls.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/whatever.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/Snafu.md /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/report.md
+
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/lib.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/backtrace_impl_std.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/once_bool.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/error_chain.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/report.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/boxed_impls.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/whatever.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/Snafu.md:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/snafu-0.9.1/src/report.md:

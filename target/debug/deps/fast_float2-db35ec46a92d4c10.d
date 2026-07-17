@@ -1,0 +1,13 @@
+/home/exxo/Documents/code/central/target/debug/deps/fast_float2-db35ec46a92d4c10.d: /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/lib.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/binary.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/common.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/decimal.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/float.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/number.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/parse.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/simple.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/table.rs
+
+/home/exxo/Documents/code/central/target/debug/deps/libfast_float2-db35ec46a92d4c10.rmeta: /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/lib.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/binary.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/common.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/decimal.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/float.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/number.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/parse.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/simple.rs /home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/table.rs
+
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/lib.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/binary.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/common.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/decimal.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/float.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/number.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/parse.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/simple.rs:
+/home/exxo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fast-float2-0.2.3/src/table.rs:
