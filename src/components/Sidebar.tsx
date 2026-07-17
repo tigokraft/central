@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import DeploymentsTracker from "./sidebar/DeploymentsTracker";
 import McpServersPanel from "./sidebar/McpServersPanel";
-import EphemeralRunsPanel from "./sidebar/EphemeralRunsPanel";
+import RunHistoryPanel from "./sidebar/RunHistoryPanel";
 
 interface SidebarProps {
   activeProcesses: { id: string; label: string; isRunning: boolean }[];
@@ -23,7 +23,7 @@ export default function Sidebar({ activeProcesses }: SidebarProps) {
   const [monitorOpen, setMonitorOpen] = useState(true);
   const [deploymentsOpen, setDeploymentsOpen] = useState(true);
   const [mcpOpen, setMcpOpen] = useState(true);
-  const [ephemeralOpen, setEphemeralOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(true);
 
   return (
     <div
@@ -56,7 +56,7 @@ export default function Sidebar({ activeProcesses }: SidebarProps) {
             <div title="Process Monitor"><Activity size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
             <div title="Deployments"><Rocket size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
             <div title="MCP Servers"><Plug size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
-            <div title="Ephemeral Runs"><Sparkles size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
+            <div title="Run History"><Sparkles size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
           </div>
         ) : (
           <>
@@ -104,20 +104,20 @@ export default function Sidebar({ activeProcesses }: SidebarProps) {
               )}
             </div>
 
-            {/* Ephemeral Runs Archive */}
+            {/* Run History: disposable ephemeral checks + persistent terminal command log */}
             <div className="space-y-1">
               <button
-                onClick={() => setEphemeralOpen(!ephemeralOpen)}
+                onClick={() => setHistoryOpen(!historyOpen)}
                 className="w-full flex items-center justify-between text-xs font-semibold text-slate-400 hover:text-slate-200 px-2 py-1 cursor-pointer"
               >
                 <span className="flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
                   <Sparkles size={12} className="text-emerald-500" />
-                  Ephemeral Runs
+                  Run History
                 </span>
-                {ephemeralOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                {historyOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               </button>
 
-              {ephemeralOpen && <EphemeralRunsPanel />}
+              {historyOpen && <RunHistoryPanel />}
             </div>
 
             {/* Deployments & Staging HUD */}
