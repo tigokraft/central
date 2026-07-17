@@ -8,7 +8,7 @@ import {
   Frame as FrameIcon
 } from "lucide-react";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../store/canvasStore";
-import { getViewportBounds, isRectVisible } from "../../lib/canvasGeometry";
+import { getViewportBounds, isRectVisible, type Bounds } from "../../lib/canvasGeometry";
 import { viewportController, computeTransformStyle, computeGridStyle, type Viewport } from "../../lib/viewportController";
 import SVGEdgeLayer from "./SVGEdgeLayer";
 import CanvasNodeWrapper from "./CanvasNodeWrapper";
@@ -56,6 +56,47 @@ const ALWAYS_MOUNTED_TYPES: CanvasNode["type"][] = ["terminalNode", "ephemeralAc
 // a fast pan/momentum fling can travel within one throttle window.
 const CULL_MARGIN = 640;
 
+// Figma-style alignment guide lines, shown while dragging a node near another. Reads
+// `dragGuides` via its own store subscription (updated every frame during a drag by
+// nodeDragController) so only this leaf re-renders per frame — not the whole InfiniteCanvas
+// tree, which would defeat the point of driving node/edge drag updates imperatively.
+function DragGuideLines({ viewBounds }: { viewBounds: Bounds }) {
+  const dragGuides = useCanvasStore((state) => state.dragGuides);
+
+  return (
+    <>
+      {dragGuides?.vertical.map((x) => (
+        <div
+          key={`v-${x}`}
+          style={{
+            position: "absolute",
+            left: x,
+            top: viewBounds.minY,
+            width: 1,
+            height: viewBounds.height,
+            pointerEvents: "none",
+          }}
+          className="bg-emerald-400 z-50"
+        />
+      ))}
+      {dragGuides?.horizontal.map((y) => (
+        <div
+          key={`h-${y}`}
+          style={{
+            position: "absolute",
+            left: viewBounds.minX,
+            top: y,
+            width: viewBounds.width,
+            height: 1,
+            pointerEvents: "none",
+          }}
+          className="bg-emerald-400 z-50"
+        />
+      ))}
+    </>
+  );
+}
+
 export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const nodes = useCanvasStore((state) => state.nodes);
   const activeTool = useCanvasStore((state) => state.activeTool);
@@ -66,7 +107,6 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const zoomToFit = useCanvasStore((state) => state.zoomToFit);
-  const dragGuides = useCanvasStore((state) => state.dragGuides);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const transformElRef = useRef<HTMLDivElement>(null);
@@ -640,35 +680,7 @@ export default function InfiniteCanvas({ showMinimap }: InfiniteCanvasProps) {
             );
           })()}
 
-          {/* Figma-style alignment guide lines, shown while dragging a node near another */}
-          {dragGuides?.vertical.map((x) => (
-            <div
-              key={`v-${x}`}
-              style={{
-                position: "absolute",
-                left: x,
-                top: viewBounds.minY,
-                width: 1,
-                height: viewBounds.height,
-                pointerEvents: "none",
-              }}
-              className="bg-emerald-400 z-50"
-            />
-          ))}
-          {dragGuides?.horizontal.map((y) => (
-            <div
-              key={`h-${y}`}
-              style={{
-                position: "absolute",
-                left: viewBounds.minX,
-                top: y,
-                width: viewBounds.width,
-                height: 1,
-                pointerEvents: "none",
-              }}
-              className="bg-emerald-400 z-50"
-            />
-          ))}
+          <DragGuideLines viewBounds={viewBounds} />
         </div>
       </div>
 
