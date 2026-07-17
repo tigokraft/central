@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useDrag } from "@use-gesture/react";
 import { Frame as FrameIcon } from "lucide-react";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
+import { viewportController } from "../../../lib/viewportController";
 
 interface ActionFrameNodeProps {
   node: CanvasNode;
@@ -22,7 +23,7 @@ export default function ActionFrameNode({ node }: ActionFrameNodeProps) {
     ({ delta: [dx, dy], first, last, event }) => {
       event.stopPropagation();
       if (first) beginHistoryBatch();
-      const zoom = useCanvasStore.getState().viewport.zoom;
+      const zoom = viewportController.getViewport().zoom;
       const nextWidth = Math.max(320, node.width + dx / zoom);
       const nextHeight = Math.max(200, node.height + dy / zoom);
       updateNodeDimensions(id, nextWidth, nextHeight);

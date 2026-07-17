@@ -2,6 +2,7 @@ import { useRef, useEffect } from "react";
 import { useDrag } from "@use-gesture/react";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../store/canvasStore";
 import { findAlignmentGuides } from "../../lib/canvasGeometry";
+import { viewportController } from "../../lib/viewportController";
 
 interface CanvasNodeWrapperProps {
   node: CanvasNode;
@@ -36,7 +37,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
     const resizeObserver = new ResizeObserver(() => {
       // Get physical screen client dimensions
       const rect = el.getBoundingClientRect();
-      const zoom = useCanvasStore.getState().viewport.zoom;
+      const zoom = viewportController.getViewport().zoom;
       
       // Calculate original canvas-space coordinates
       const width = rect.width / zoom;
@@ -104,7 +105,7 @@ export default function CanvasNodeWrapper({ node, children }: CanvasNodeWrapperP
         }
       }
 
-      const zoom = useCanvasStore.getState().viewport.zoom;
+      const zoom = viewportController.getViewport().zoom;
 
       const rawDx = dx / zoom;
       const rawDy = dy / zoom;

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useDrag } from "@use-gesture/react";
 import { Box, Settings, ArrowRight, Plus, Trash2 } from "lucide-react";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
+import { viewportController } from "../../../lib/viewportController";
 import Port from "../Port";
 import NodeToolbelt from "./NodeToolbelt";
 
@@ -25,7 +26,7 @@ export default function ActionContainerNode({ node }: ActionContainerNodeProps) 
     ({ delta: [dx, dy], first, last, event }) => {
       event.stopPropagation();
       if (first) beginHistoryBatch();
-      const zoom = useCanvasStore.getState().viewport.zoom;
+      const zoom = viewportController.getViewport().zoom;
       const nextWidth = Math.max(250, node.width + dx / zoom);
       const nextHeight = Math.max(150, node.height + dy / zoom);
       updateNodeDimensions(id, nextWidth, nextHeight);

@@ -14,6 +14,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
+import { viewportController } from "../../../lib/viewportController";
 import Port from "../Port";
 
 // Import xterm CSS styles so that it renders properly
@@ -290,7 +291,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     ({ delta: [dx, dy], first, last, event }) => {
       event.stopPropagation();
       if (first) beginHistoryBatch();
-      const zoom = useCanvasStore.getState().viewport.zoom;
+      const zoom = viewportController.getViewport().zoom;
       const nextWidth = Math.max(240, node.width + dx / zoom);
       const nextHeight = Math.max(120, node.height + dy / zoom);
       updateNodeDimensions(id, nextWidth, nextHeight);
