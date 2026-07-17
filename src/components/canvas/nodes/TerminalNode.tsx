@@ -376,13 +376,13 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
               title="Toggle context isolation"
               className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-mono border transition-colors cursor-pointer shrink-0 ${
                 data.contextMode === "memory-aware"
-                  ? "bg-purple-500/20 border-purple-500/40 text-purple-300"
+                  ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-300"
                   : "bg-slate-900 border-slate-800 text-slate-500"
               }`}
             >
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  data.contextMode === "memory-aware" ? "bg-purple-400" : "bg-slate-600"
+                  data.contextMode === "memory-aware" ? "bg-emerald-400" : "bg-slate-600"
                 }`}
               />
               Context: {data.contextMode === "memory-aware" ? "Memory-Aware" : "Isolated"}
@@ -398,7 +398,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
               <button
                 onClick={handleAttachFact}
                 title="Attach .aimem Fact"
-                className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-purple-400 transition-colors cursor-pointer"
+                className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
               >
                 <Brain size={10} />
               </button>

@@ -86,14 +86,10 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
           const w = node.width * scale;
           const h = node.height * scale;
 
-          let color = "bg-emerald-500/50 border border-emerald-500/80";
-          if (node.type === "actionContainerNode") {
-            color = "bg-transparent border border-slate-700";
-          } else if (node.type === "memoryGraphNote") {
-            color = "bg-pink-500/50 border border-pink-500/80";
-          } else if (node.type === "terminalNode") {
-            color = "bg-teal-500/50 border border-teal-500/80";
-          }
+          const color =
+            node.type === "actionContainerNode"
+              ? "bg-transparent border border-slate-700"
+              : "bg-emerald-500/50 border border-emerald-500/80";
 
           return (
             <div

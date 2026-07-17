@@ -197,7 +197,7 @@ export default function Sidebar({ onLoadPreset, activeProcesses }: SidebarProps)
                 className="w-full flex items-center justify-between text-xs font-semibold text-slate-400 hover:text-slate-200 px-2 py-1 cursor-pointer"
               >
                 <span className="flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
-                  <Sparkles size={12} className="text-amber-400" />
+                  <Sparkles size={12} className="text-emerald-500" />
                   Ephemeral Runs
                 </span>
                 {ephemeralOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}

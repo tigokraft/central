@@ -105,11 +105,11 @@ export default function EphemeralActionNode({ node }: EphemeralActionNodeProps) 
   return (
     <div
       className={`relative w-full h-full bg-slate-900 border rounded-lg shadow-panel overflow-hidden p-2.5 flex flex-col gap-1 select-none transition-opacity duration-500 ${
-        isError ? "border-red-500/50" : isSuccess ? "border-emerald-500/40" : "border-amber-500/40"
+        isError ? "border-red-500/50" : isSuccess ? "border-emerald-500/40" : "border-running/40"
       } ${isArchiving ? "opacity-30" : "opacity-100"}`}
     >
       <div className="flex items-center gap-1.5 min-w-0">
-        <Sparkles size={11} className="text-amber-400 shrink-0" />
+        <Sparkles size={11} className="text-slate-400 shrink-0" />
         <span className="text-[10px] font-mono text-slate-300 truncate flex-1">
           {data.label || "Ad-hoc Check"}
         </span>
