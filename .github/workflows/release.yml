@@ -54,7 +54,8 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            pkg-config
+            pkg-config \
+            protobuf-compiler
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
