@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { temporal } from "zundo";
 import { invoke } from "@tauri-apps/api/core";
 import { computeFitViewport, getNodesBounds } from "../lib/canvasGeometry";
+import { viewportController, clampZoom } from "../lib/viewportController";
 
 const HISTORY_LIMIT = 100;
 
@@ -272,37 +273,38 @@ export const useCanvasStore = create<CanvasState>()(
   cableDiffStats: {},
   isPipelineRunning: false,
 
-  setViewport: (vp) =>
-    set((state) => ({ viewport: { ...state.viewport, ...vp } })),
+  // Viewport mutations are delegated to viewportController, which owns the "live" value and
+  // writes the transformed DOM node directly every frame (see InfiniteCanvas.tsx); `state
+  // .viewport` here is just a trailing-debounced mirror of that for reactive consumers
+  // (Minimap, zoom% readouts) that don't need per-frame precision. See viewportController.ts.
+  setViewport: (vp) => {
+    const current = viewportController.getViewport();
+    viewportController.setInstant({ ...current, ...vp });
+  },
 
-  panViewport: (dx, dy) =>
-    set((state) => ({
-      viewport: {
-        ...state.viewport,
-        x: state.viewport.x + dx,
-        y: state.viewport.y + dy,
-      },
-    })),
+  panViewport: (dx, dy) => {
+    const current = viewportController.getViewport();
+    viewportController.setInstant({ ...current, x: current.x + dx, y: current.y + dy });
+  },
 
-  zoomViewport: (factor, mouseX, mouseY) =>
-    set((state) => {
-      const zoom = Math.min(Math.max(state.viewport.zoom * factor, 0.15), 4);
-      if (mouseX !== undefined && mouseY !== undefined) {
-        // Zoom towards mouse pointer
-        const dx = mouseX - state.viewport.x;
-        const dy = mouseY - state.viewport.y;
-        return {
-          viewport: {
-            zoom,
-            x: mouseX - dx * (zoom / state.viewport.zoom),
-            y: mouseY - dy * (zoom / state.viewport.zoom),
-          },
-        };
-      }
-      return {
-        viewport: { ...state.viewport, zoom },
-      };
-    }),
+  // Called both by the wheel handler (ctrl+wheel/pinch — always passes a mouse focal point
+  // and must track it 1:1, no easing) and by the Toolbar/Topbar +/- buttons (no focal point
+  // — eases into the new zoom level like Figma's toolbar zoom).
+  zoomViewport: (factor, mouseX, mouseY) => {
+    const current = viewportController.getViewport();
+    const zoom = clampZoom(current.zoom * factor);
+    if (mouseX !== undefined && mouseY !== undefined) {
+      const dx = mouseX - current.x;
+      const dy = mouseY - current.y;
+      viewportController.setInstant({
+        zoom,
+        x: mouseX - dx * (zoom / current.zoom),
+        y: mouseY - dy * (zoom / current.zoom),
+      });
+    } else {
+      viewportController.animateTo({ ...current, zoom });
+    }
+  },
 
   // Frames the given nodes (or every node when nodeIds is omitted/empty) in the visible
   // canvas area. Reads the live container rect rather than tracked dimensions state so it
@@ -319,7 +321,7 @@ export const useCanvasStore = create<CanvasState>()(
     const width = rect?.width ?? window.innerWidth;
     const height = rect?.height ?? window.innerHeight;
 
-    set({ viewport: computeFitViewport(bounds, width, height) });
+    viewportController.animateTo(computeFitViewport(bounds, width, height));
   },
 
   setActiveTool: (tool) => set({ activeTool: tool }),
@@ -798,6 +800,13 @@ export const useCanvasStore = create<CanvasState>()(
       limit: HISTORY_LIMIT,
     }
   )
+);
+
+// viewportController owns the live viewport; this makes `state.viewport` a trailing-debounced
+// mirror of it, kept in sync via setState (bypassing zundo's undo tracking entirely — the
+// temporal middleware only sees nodes/edges via partialize above, so this never touches it).
+viewportController.init(useCanvasStore.getState().viewport, (vp) =>
+  useCanvasStore.setState({ viewport: vp })
 );
 
 // zundo's automatic per-set() tracking is deliberately disabled here (see below) — every
