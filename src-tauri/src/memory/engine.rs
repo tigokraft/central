@@ -255,28 +255,6 @@ pub async fn query_memory_graph(
     Ok(search_results)
 }
 
-#[tauri::command]
-pub async fn supersede_record(
-    old_id: String,
-    new_id: String,
-    app: AppHandle,
-) -> Result<(), String> {
-    let project_root = crate::git_engine::resolve_repo_root(&app);
-    let (memory_dir, _) = ensure_dirs(&project_root);
-    let aimem_path = memory_dir.join(format!("{}.aimem", old_id));
-
-    if aimem_path.exists() {
-        println!("Superseded {} with {}", old_id, new_id);
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn export_to_obsidian() -> Result<(), String> {
-    println!("All files synced to .central/vault/ successfully!");
-    Ok(())
-}
-
 /// Lists every `.aimem` record on disk (newest first) for the Terminal Node's
 /// "Attach .aimem Fact" context action.
 #[tauri::command]
