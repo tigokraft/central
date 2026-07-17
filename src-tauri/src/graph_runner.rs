@@ -132,7 +132,7 @@ fn build_context(
     let node_of: HashMap<String, GraphNodeInput> =
         nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
 
-    let working_dir = crate::git_engine::resolve_repo_root();
+    let working_dir = crate::git_engine::resolve_repo_root(&app);
 
     Ok(Arc::new(ExecutionContext {
         app,
