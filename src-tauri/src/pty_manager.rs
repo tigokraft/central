@@ -63,6 +63,12 @@ impl ScrollbackBuffer {
         self.len = (self.len + data.len()).min(self.capacity);
     }
 
+    // Discards all currently buffered bytes without shrinking the underlying allocation.
+    fn clear(&mut self) {
+        self.write_pos = 0;
+        self.len = 0;
+    }
+
     // Returns the buffered bytes in write order (oldest first).
     fn drain_ordered(&self) -> Vec<u8> {
         if self.len < self.capacity {
@@ -287,6 +293,17 @@ pub fn get_pty_scrollback(node_id: String, state: State<'_, PtyManager>) -> Resu
 }
 
 #[tauri::command]
+pub fn clear_pty_scrollback(node_id: String, state: State<'_, PtyManager>) -> Result<(), String> {
+    let processes = state.processes.lock().unwrap();
+    if let Some(proc) = processes.get(&node_id) {
+        proc.scrollback.lock().unwrap().clear();
+        Ok(())
+    } else {
+        Err(format!("No active PTY session for node ID: {}", node_id))
+    }
+}
+
+#[tauri::command]
 pub fn destroy_pty(node_id: String, state: State<'_, PtyManager>) -> Result<(), String> {
     let proc = {
         let mut processes = state.processes.lock().unwrap();
@@ -349,5 +366,15 @@ mod tests {
             buf.append(&[*byte]);
         }
         assert_eq!(buf.drain_ordered(), b"fghij".to_vec());
+    }
+
+    #[test]
+    fn scrollback_clear_empties_the_buffer_and_appends_after_clear_start_fresh() {
+        let mut buf = ScrollbackBuffer::new(8);
+        buf.append(b"abcdefgh");
+        buf.clear();
+        assert_eq!(buf.drain_ordered(), Vec::<u8>::new());
+        buf.append(b"ij");
+        assert_eq!(buf.drain_ordered(), b"ij".to_vec());
     }
 }
