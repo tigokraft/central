@@ -1,3 +1,4 @@
+mod agents;
 mod ephemeral;
 mod git_engine;
 mod graph_runner;
@@ -44,6 +45,7 @@ pub fn run() {
         .manage(mcp::McpManagerState::default())
         .manage(ProjectState::default())
         .manage(workspace_fs::WorkspaceWatcherState::default())
+        .manage(agents::AgentRegistry::default())
         .setup(|_app| {
             #[cfg(target_os = "windows")]
             {
@@ -63,6 +65,9 @@ pub fn run() {
             pty_manager::destroy_pty,
             pty_manager::get_pty_scrollback,
             pty_manager::clear_pty_scrollback,
+            agents::list_available_agents,
+            agents::launch_agent_session,
+            agents::send_agent_input,
             memory::engine::create_memory_record,
             memory::engine::query_memory_graph,
             memory::engine::list_aimem_facts,
