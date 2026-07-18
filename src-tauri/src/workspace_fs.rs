@@ -74,7 +74,9 @@ fn resolve_within_workspace(root_canonical: &Path, relative: &str) -> Result<Pat
             None => break,
         }
     }
-    let canonical_ancestor = existing_ancestor.canonicalize().map_err(|e| e.to_string())?;
+    let canonical_ancestor = existing_ancestor
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
     if !path_is_within(root_canonical, &canonical_ancestor) {
         return Err("Path escapes the workspace".to_string());
     }
@@ -108,7 +110,11 @@ fn list_dir_at(root_canonical: &Path, relative: &str) -> Result<Vec<FsEntry>, St
         } else {
             FsEntryKind::File
         };
-        let size = if metadata.is_file() { metadata.len() } else { 0 };
+        let size = if metadata.is_file() {
+            metadata.len()
+        } else {
+            0
+        };
         entries.push(FsEntry { name, kind, size });
     }
 
@@ -205,7 +211,11 @@ pub fn write_file(
     content: String,
     app: AppHandle,
 ) -> Result<(), String> {
-    write_file_at(&canonical_workspace_root(&app, &project_id)?, &path, &content)
+    write_file_at(
+        &canonical_workspace_root(&app, &project_id)?,
+        &path,
+        &content,
+    )
 }
 
 #[tauri::command]
@@ -340,7 +350,10 @@ fn run_debounce_loop(
         if let Some(t) = last_event {
             if t.elapsed() >= DEBOUNCE_WINDOW && !pending.is_empty() {
                 let paths: Vec<String> = pending.drain().map(|p| p.display().to_string()).collect();
-                let _ = app.emit("workspace-fs-changed", serde_json::json!({ "paths": paths }));
+                let _ = app.emit(
+                    "workspace-fs-changed",
+                    serde_json::json!({ "paths": paths }),
+                );
                 last_event = None;
             }
         }
@@ -464,7 +477,10 @@ mod tests {
         let root = Path::new("/tmp/xxx/work");
         let sibling = Path::new("/tmp/xxx/workspace2/secret.txt");
         assert!(!path_is_within(root, sibling));
-        assert!(path_is_within(root, Path::new("/tmp/xxx/work/sub/file.txt")));
+        assert!(path_is_within(
+            root,
+            Path::new("/tmp/xxx/work/sub/file.txt")
+        ));
     }
 
     #[test]
@@ -595,7 +611,10 @@ mod tests {
     fn touches_hidden_entry_detects_git_and_central() {
         let root = PathBuf::from("/tmp/proj");
         assert!(touches_hidden_entry(&root, &root.join(".git/HEAD")));
-        assert!(touches_hidden_entry(&root, &root.join(".central/worktrees/x")));
+        assert!(touches_hidden_entry(
+            &root,
+            &root.join(".central/worktrees/x")
+        ));
         assert!(!touches_hidden_entry(&root, &root.join("src/main.rs")));
     }
 }
