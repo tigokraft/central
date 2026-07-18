@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { RotateCcw } from "lucide-react";
 import { useEditorStore } from "../../store/editorStore";
 import EditorTabBar from "./EditorTabBar";
@@ -13,6 +13,22 @@ export default function EditorPanel() {
   const activeTab = useEditorStore((s) => (s.activePath ? s.tabs[s.activePath] : undefined));
   const keepMine = useEditorStore((s) => s.keepMine);
   const reloadFile = useEditorStore((s) => s.reloadFile);
+  const closeFile = useEditorStore((s) => s.closeFile);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isModW = (e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === "w" || e.code === "KeyW");
+      if (isModW) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (activePath) {
+          closeFile(activePath);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [activePath, closeFile]);
 
   return (
     <div className="w-[440px] shrink-0 h-full flex flex-col bg-slate-950 border-l border-slate-800">
