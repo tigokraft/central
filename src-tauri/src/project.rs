@@ -81,7 +81,9 @@ fn project_dir_at(root: &Path, id: &str) -> PathBuf {
     root.join(sanitize_id(id))
 }
 
-fn graph_path_at(root: &Path, id: &str) -> PathBuf {
+/// Path of the legacy single-graph file a pre-pipelines project stored its canvas at.
+/// Only read during migration (see `ensure_pipelines_at`); never written to anymore.
+fn legacy_graph_path_at(root: &Path, id: &str) -> PathBuf {
     project_dir_at(root, id).join("graph.json")
 }
 
@@ -233,30 +235,221 @@ fn ensure_workspace_at(
     Ok(projects[idx].clone())
 }
 
-fn save_project_graph_at(
+/// Entry in a project's pipelines manifest. Deliberately excludes the graph itself, mirroring
+/// `ProjectMeta`, so the tab bar can list/sort pipelines without deserializing every graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineMeta {
+    pub id: String,
+    pub name: String,
+    pub created_at: u64,
+    pub last_modified_at: u64,
+}
+
+fn default_graph_json() -> serde_json::Value {
+    serde_json::json!({ "nodes": [], "edges": [], "viewport": { "x": 0, "y": 0, "zoom": 1 } })
+}
+
+fn new_pipeline_id(name: &str) -> String {
+    format!("{}-{}", sanitize_id(&name.to_lowercase()), now_millis())
+}
+
+fn pipelines_dir_at(root: &Path, project_id: &str) -> PathBuf {
+    project_dir_at(root, project_id).join("pipelines")
+}
+
+fn pipelines_manifest_path_at(root: &Path, project_id: &str) -> PathBuf {
+    pipelines_dir_at(root, project_id).join("index.json")
+}
+
+fn pipeline_graph_path_at(root: &Path, project_id: &str, pipeline_id: &str) -> PathBuf {
+    pipelines_dir_at(root, project_id).join(format!("{}.json", sanitize_id(pipeline_id)))
+}
+
+fn read_pipelines_manifest_at(root: &Path, project_id: &str) -> Result<Vec<PipelineMeta>, String> {
+    let path = pipelines_manifest_path_at(root, project_id);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+fn write_pipelines_manifest_at(
     root: &Path,
     project_id: &str,
-    graph: &serde_json::Value,
+    pipelines: &[PipelineMeta],
 ) -> Result<(), String> {
-    let dir = project_dir_at(root, project_id);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let raw = serde_json::to_string(graph).map_err(|e| e.to_string())?;
-    std::fs::write(graph_path_at(root, project_id), raw).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(pipelines_dir_at(root, project_id)).map_err(|e| e.to_string())?;
+    let raw = serde_json::to_string_pretty(pipelines).map_err(|e| e.to_string())?;
+    std::fs::write(pipelines_manifest_path_at(root, project_id), raw).map_err(|e| e.to_string())
+}
 
+/// Bumps a project's `lastModifiedAt` in the top-level projects manifest, e.g. when one of its
+/// pipeline graphs is saved. No-ops if the project id isn't found.
+fn touch_project_at(root: &Path, project_id: &str) -> Result<(), String> {
     let mut projects = read_manifest_at(root)?;
     if let Some(p) = projects.iter_mut().find(|p| p.id == project_id) {
         p.last_modified_at = now_millis();
         write_manifest_at(root, &projects)?;
     }
-
     Ok(())
 }
 
-fn load_project_graph_at(
+/// Returns a project's pipelines manifest, creating it on first access. A project with no
+/// manifest yet either has a legacy single `graph.json` (pre-pipelines project — moved into a
+/// "Main" pipeline) or is brand new (given a fresh empty "Main" pipeline). Idempotent: once the
+/// manifest exists, it's just read back as-is.
+fn ensure_pipelines_at(root: &Path, project_id: &str) -> Result<Vec<PipelineMeta>, String> {
+    let manifest_path = pipelines_manifest_path_at(root, project_id);
+    if manifest_path.exists() {
+        return read_pipelines_manifest_at(root, project_id);
+    }
+
+    let now = now_millis();
+    let pipeline_id = new_pipeline_id("main");
+    let meta = PipelineMeta {
+        id: pipeline_id.clone(),
+        name: "Main".to_string(),
+        created_at: now,
+        last_modified_at: now,
+    };
+
+    let dest = pipeline_graph_path_at(root, project_id, &pipeline_id);
+    std::fs::create_dir_all(pipelines_dir_at(root, project_id)).map_err(|e| e.to_string())?;
+
+    let legacy_path = legacy_graph_path_at(root, project_id);
+    if legacy_path.exists() {
+        std::fs::rename(&legacy_path, &dest).map_err(|e| e.to_string())?;
+    } else {
+        let raw = serde_json::to_string(&default_graph_json()).map_err(|e| e.to_string())?;
+        std::fs::write(&dest, raw).map_err(|e| e.to_string())?;
+    }
+
+    let manifest = vec![meta];
+    write_pipelines_manifest_at(root, project_id, &manifest)?;
+    Ok(manifest)
+}
+
+fn create_pipeline_at(root: &Path, project_id: &str, name: &str) -> Result<PipelineMeta, String> {
+    let mut pipelines = ensure_pipelines_at(root, project_id)?;
+
+    let now = now_millis();
+    let meta = PipelineMeta {
+        id: new_pipeline_id(name),
+        name: name.to_string(),
+        created_at: now,
+        last_modified_at: now,
+    };
+
+    let raw = serde_json::to_string(&default_graph_json()).map_err(|e| e.to_string())?;
+    std::fs::write(
+        pipeline_graph_path_at(root, project_id, &meta.id),
+        raw,
+    )
+    .map_err(|e| e.to_string())?;
+
+    pipelines.push(meta.clone());
+    write_pipelines_manifest_at(root, project_id, &pipelines)?;
+    Ok(meta)
+}
+
+fn rename_pipeline_at(
     root: &Path,
     project_id: &str,
+    pipeline_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    let mut pipelines = ensure_pipelines_at(root, project_id)?;
+    let entry = pipelines
+        .iter_mut()
+        .find(|p| p.id == pipeline_id)
+        .ok_or_else(|| format!("Pipeline '{}' not found", pipeline_id))?;
+    entry.name = name.to_string();
+    entry.last_modified_at = now_millis();
+    write_pipelines_manifest_at(root, project_id, &pipelines)
+}
+
+fn duplicate_pipeline_at(
+    root: &Path,
+    project_id: &str,
+    pipeline_id: &str,
+) -> Result<PipelineMeta, String> {
+    let mut pipelines = ensure_pipelines_at(root, project_id)?;
+    let source = pipelines
+        .iter()
+        .find(|p| p.id == pipeline_id)
+        .ok_or_else(|| format!("Pipeline '{}' not found", pipeline_id))?
+        .clone();
+
+    let now = now_millis();
+    let meta = PipelineMeta {
+        id: new_pipeline_id(&source.name),
+        name: format!("{} copy", source.name),
+        created_at: now,
+        last_modified_at: now,
+    };
+
+    let source_path = pipeline_graph_path_at(root, project_id, &source.id);
+    let raw = if source_path.exists() {
+        std::fs::read_to_string(&source_path).map_err(|e| e.to_string())?
+    } else {
+        serde_json::to_string(&default_graph_json()).map_err(|e| e.to_string())?
+    };
+    std::fs::write(pipeline_graph_path_at(root, project_id, &meta.id), raw)
+        .map_err(|e| e.to_string())?;
+
+    pipelines.push(meta.clone());
+    write_pipelines_manifest_at(root, project_id, &pipelines)?;
+    Ok(meta)
+}
+
+fn delete_pipeline_at(root: &Path, project_id: &str, pipeline_id: &str) -> Result<(), String> {
+    let mut pipelines = ensure_pipelines_at(root, project_id)?;
+    if pipelines.len() <= 1 {
+        return Err("A project must keep at least one pipeline".to_string());
+    }
+    let idx = pipelines
+        .iter()
+        .position(|p| p.id == pipeline_id)
+        .ok_or_else(|| format!("Pipeline '{}' not found", pipeline_id))?;
+    pipelines.remove(idx);
+    write_pipelines_manifest_at(root, project_id, &pipelines)?;
+
+    let path = pipeline_graph_path_at(root, project_id, pipeline_id);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn save_pipeline_graph_at(
+    root: &Path,
+    project_id: &str,
+    pipeline_id: &str,
+    graph: &serde_json::Value,
+) -> Result<(), String> {
+    let mut pipelines = ensure_pipelines_at(root, project_id)?;
+    let entry = pipelines
+        .iter_mut()
+        .find(|p| p.id == pipeline_id)
+        .ok_or_else(|| format!("Pipeline '{}' not found", pipeline_id))?;
+    entry.last_modified_at = now_millis();
+    write_pipelines_manifest_at(root, project_id, &pipelines)?;
+
+    let raw = serde_json::to_string(graph).map_err(|e| e.to_string())?;
+    std::fs::write(pipeline_graph_path_at(root, project_id, pipeline_id), raw)
+        .map_err(|e| e.to_string())?;
+
+    touch_project_at(root, project_id)
+}
+
+fn load_pipeline_graph_at(
+    root: &Path,
+    project_id: &str,
+    pipeline_id: &str,
 ) -> Result<Option<serde_json::Value>, String> {
-    let path = graph_path_at(root, project_id);
+    let path = pipeline_graph_path_at(root, project_id, pipeline_id);
     if !path.exists() {
         return Ok(None);
     }
@@ -356,20 +549,64 @@ pub fn pick_folder(app: AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn save_project_graph(
-    project_id: String,
-    graph: serde_json::Value,
-    app: AppHandle,
-) -> Result<(), String> {
-    save_project_graph_at(&projects_root(&app)?, &project_id, &graph)
+pub fn list_pipelines(project_id: String, app: AppHandle) -> Result<Vec<PipelineMeta>, String> {
+    ensure_pipelines_at(&projects_root(&app)?, &project_id)
 }
 
 #[tauri::command]
-pub fn load_project_graph(
+pub fn create_pipeline(
     project_id: String,
+    name: String,
+    app: AppHandle,
+) -> Result<PipelineMeta, String> {
+    create_pipeline_at(&projects_root(&app)?, &project_id, &name)
+}
+
+#[tauri::command]
+pub fn rename_pipeline(
+    project_id: String,
+    pipeline_id: String,
+    name: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    rename_pipeline_at(&projects_root(&app)?, &project_id, &pipeline_id, &name)
+}
+
+#[tauri::command]
+pub fn duplicate_pipeline(
+    project_id: String,
+    pipeline_id: String,
+    app: AppHandle,
+) -> Result<PipelineMeta, String> {
+    duplicate_pipeline_at(&projects_root(&app)?, &project_id, &pipeline_id)
+}
+
+#[tauri::command]
+pub fn delete_pipeline(
+    project_id: String,
+    pipeline_id: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    delete_pipeline_at(&projects_root(&app)?, &project_id, &pipeline_id)
+}
+
+#[tauri::command]
+pub fn save_pipeline_graph(
+    project_id: String,
+    pipeline_id: String,
+    graph: serde_json::Value,
+    app: AppHandle,
+) -> Result<(), String> {
+    save_pipeline_graph_at(&projects_root(&app)?, &project_id, &pipeline_id, &graph)
+}
+
+#[tauri::command]
+pub fn load_pipeline_graph(
+    project_id: String,
+    pipeline_id: String,
     app: AppHandle,
 ) -> Result<Option<serde_json::Value>, String> {
-    load_project_graph_at(&projects_root(&app)?, &project_id)
+    load_pipeline_graph_at(&projects_root(&app)?, &project_id, &pipeline_id)
 }
 
 #[cfg(test)]
@@ -418,18 +655,19 @@ mod tests {
     }
 
     #[test]
-    fn save_and_load_graph_roundtrips() {
+    fn save_and_load_pipeline_graph_roundtrips() {
         let root = temp_root();
         let meta = create_test_project(&root, "Roundtrip");
+        let pipeline = ensure_pipelines_at(&root, &meta.id).unwrap().remove(0);
 
         let graph = serde_json::json!({
             "nodes": [{ "id": "n1" }],
             "edges": [],
             "viewport": { "x": 0, "y": 0, "zoom": 1 },
         });
-        save_project_graph_at(&root, &meta.id, &graph).unwrap();
+        save_pipeline_graph_at(&root, &meta.id, &pipeline.id, &graph).unwrap();
 
-        let loaded = load_project_graph_at(&root, &meta.id).unwrap();
+        let loaded = load_pipeline_graph_at(&root, &meta.id, &pipeline.id).unwrap();
         assert_eq!(loaded, Some(graph));
 
         let _ = std::fs::remove_dir_all(&root);
@@ -437,28 +675,176 @@ mod tests {
     }
 
     #[test]
-    fn save_graph_updates_manifest_last_modified_at() {
+    fn save_pipeline_graph_updates_pipeline_and_project_last_modified_at() {
         let root = temp_root();
         let meta = create_test_project(&root, "Timestamps");
+        let pipeline = ensure_pipelines_at(&root, &meta.id).unwrap().remove(0);
 
         std::thread::sleep(std::time::Duration::from_millis(5));
-        save_project_graph_at(&root, &meta.id, &serde_json::json!({})).unwrap();
+        save_pipeline_graph_at(&root, &meta.id, &pipeline.id, &serde_json::json!({})).unwrap();
 
-        let manifest = read_manifest_at(&root).unwrap();
-        let updated = manifest.iter().find(|p| p.id == meta.id).unwrap();
-        assert!(updated.last_modified_at >= meta.last_modified_at);
+        let project_manifest = read_manifest_at(&root).unwrap();
+        let updated_project = project_manifest.iter().find(|p| p.id == meta.id).unwrap();
+        assert!(updated_project.last_modified_at >= meta.last_modified_at);
+
+        let pipelines = read_pipelines_manifest_at(&root, &meta.id).unwrap();
+        let updated_pipeline = pipelines.iter().find(|p| p.id == pipeline.id).unwrap();
+        assert!(updated_pipeline.last_modified_at >= pipeline.last_modified_at);
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&meta.workspace_path);
     }
 
     #[test]
-    fn load_graph_returns_none_when_missing() {
+    fn load_pipeline_graph_returns_none_when_missing() {
         let root = temp_root();
-        let result = load_project_graph_at(&root, "does-not-exist").unwrap();
+        let result = load_pipeline_graph_at(&root, "does-not-exist", "also-missing").unwrap();
         assert_eq!(result, None);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ensure_pipelines_migrates_legacy_graph_into_main_pipeline() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Legacy Graph");
+
+        let graph = serde_json::json!({
+            "nodes": [{ "id": "n1" }],
+            "edges": [],
+            "viewport": { "x": 0, "y": 0, "zoom": 1 },
+        });
+        std::fs::write(legacy_graph_path_at(&root, &meta.id), graph.to_string()).unwrap();
+
+        let pipelines = ensure_pipelines_at(&root, &meta.id).unwrap();
+        assert_eq!(pipelines.len(), 1);
+        assert_eq!(pipelines[0].name, "Main");
+        assert!(!legacy_graph_path_at(&root, &meta.id).exists());
+
+        let loaded = load_pipeline_graph_at(&root, &meta.id, &pipelines[0].id).unwrap();
+        assert_eq!(loaded, Some(graph));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn ensure_pipelines_creates_empty_main_pipeline_for_brand_new_project() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Brand New");
+
+        let pipelines = ensure_pipelines_at(&root, &meta.id).unwrap();
+        assert_eq!(pipelines.len(), 1);
+        assert_eq!(pipelines[0].name, "Main");
+
+        let loaded = load_pipeline_graph_at(&root, &meta.id, &pipelines[0].id).unwrap();
+        assert_eq!(loaded, Some(default_graph_json()));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn ensure_pipelines_is_idempotent() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Idempotent");
+
+        let first = ensure_pipelines_at(&root, &meta.id).unwrap();
+        let second = ensure_pipelines_at(&root, &meta.id).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].id, second[0].id);
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn create_pipeline_adds_entry_with_empty_graph() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Create Pipeline");
+
+        let created = create_pipeline_at(&root, &meta.id, "Second").unwrap();
+        let pipelines = read_pipelines_manifest_at(&root, &meta.id).unwrap();
+        assert_eq!(pipelines.len(), 2);
+        assert!(pipelines.iter().any(|p| p.id == created.id && p.name == "Second"));
+
+        let loaded = load_pipeline_graph_at(&root, &meta.id, &created.id).unwrap();
+        assert_eq!(loaded, Some(default_graph_json()));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn rename_pipeline_updates_name() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Rename Pipeline");
+        let pipeline = ensure_pipelines_at(&root, &meta.id).unwrap().remove(0);
+
+        rename_pipeline_at(&root, &meta.id, &pipeline.id, "Renamed").unwrap();
+
+        let pipelines = read_pipelines_manifest_at(&root, &meta.id).unwrap();
+        assert_eq!(pipelines[0].name, "Renamed");
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn duplicate_pipeline_copies_graph_under_new_id() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Duplicate Pipeline");
+        let pipeline = ensure_pipelines_at(&root, &meta.id).unwrap().remove(0);
+
+        let graph = serde_json::json!({ "nodes": [{ "id": "n1" }], "edges": [], "viewport": { "x": 0, "y": 0, "zoom": 1 } });
+        save_pipeline_graph_at(&root, &meta.id, &pipeline.id, &graph).unwrap();
+
+        let duplicated = duplicate_pipeline_at(&root, &meta.id, &pipeline.id).unwrap();
+        assert_ne!(duplicated.id, pipeline.id);
+        assert_eq!(duplicated.name, "Main copy");
+
+        let loaded = load_pipeline_graph_at(&root, &meta.id, &duplicated.id).unwrap();
+        assert_eq!(loaded, Some(graph));
+
+        let pipelines = read_pipelines_manifest_at(&root, &meta.id).unwrap();
+        assert_eq!(pipelines.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn delete_pipeline_removes_entry_and_graph_file() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Delete Pipeline");
+        let first = ensure_pipelines_at(&root, &meta.id).unwrap().remove(0);
+        let second = create_pipeline_at(&root, &meta.id, "Second").unwrap();
+
+        delete_pipeline_at(&root, &meta.id, &second.id).unwrap();
+
+        let pipelines = read_pipelines_manifest_at(&root, &meta.id).unwrap();
+        assert_eq!(pipelines.len(), 1);
+        assert_eq!(pipelines[0].id, first.id);
+        assert!(!pipeline_graph_path_at(&root, &meta.id, &second.id).exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn delete_pipeline_rejects_removing_last_remaining_pipeline() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Delete Last Pipeline");
+        let only = ensure_pipelines_at(&root, &meta.id).unwrap().remove(0);
+
+        let result = delete_pipeline_at(&root, &meta.id, &only.id);
+        assert!(result.is_err());
+
+        let pipelines = read_pipelines_manifest_at(&root, &meta.id).unwrap();
+        assert_eq!(pipelines.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
     }
 
     #[test]
