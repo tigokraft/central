@@ -19,6 +19,12 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
+import {
+  useSettingsStore,
+  clampTerminalFontSize,
+  TERMINAL_FONT_SIZE_MIN,
+  TERMINAL_FONT_SIZE_MAX,
+} from "../../../store/settingsStore";
 import { viewportController } from "../../../lib/viewportController";
 import Port from "../Port";
 
@@ -132,6 +138,8 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   const focusedNodeId = useCanvasStore((state) => state.focusedNodeId);
   const setFocusedNodeId = useCanvasStore((state) => state.setFocusedNodeId);
   const isFocused = focusedNodeId === id;
+  const defaultTerminalFontSize = useSettingsStore((state) => state.defaultTerminalFontSize);
+  const fontSize = clampTerminalFontSize(data.terminalFontSize ?? defaultTerminalFontSize);
 
   // Card content (title bar, xterm view, PTY subscriptions) always renders into this single
   // detached div. Its *children* are owned by React via the portal below and never
@@ -173,7 +181,9 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         cursor: "#10b981",
         selectionBackground: "rgba(16, 185, 129, 0.3)",
       },
-      fontSize: 11,
+      fontSize,
+      lineHeight: 1.1,
+      letterSpacing: 0,
       fontFamily: "Fira Code, ui-monospace, monospace",
       cursorBlink: true,
       rows: 8,
@@ -327,14 +337,16 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   }, [isFocused, setFocusedNodeId]);
 
   // Re-fits the terminal's rows/cols to the card's current size (manual resize, minimize,
-  // restore, or focus mode toggle) and lets the backend PTY know so the shell's own notion
-  // of its window size stays in sync. Skipped while minimized, since the display is hidden
-  // and its size is meaningless until it's restored.
+  // restore, focus mode toggle, or a font-size change) and lets the backend PTY know so the
+  // shell's own notion of its window size stays in sync. Skipped while minimized, since the
+  // display is hidden and its size is meaningless until it's restored.
   useEffect(() => {
     if (data.minimized) return;
     const fitAddon = fitAddonRef.current;
     const term = termInstance.current;
     if (!fitAddon || !term) return;
+
+    term.options.fontSize = fontSize;
 
     // Defer one frame so the wrapper's new inline height/width has already been painted.
     const raf = requestAnimationFrame(() => {
@@ -344,7 +356,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, [id, node.width, node.height, data.minimized, isFocused]);
+  }, [id, node.width, node.height, data.minimized, isFocused, fontSize]);
 
   // Focuses the search input as soon as the search bar mounts.
   useEffect(() => {
@@ -385,6 +397,12 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         updateNodeData(id, { status: "error" });
       });
     }
+  };
+
+  const handleFontSizeChange = (delta: number) => {
+    beginHistoryBatch();
+    updateNodeData(id, { terminalFontSize: clampTerminalFontSize(fontSize + delta) });
+    endHistoryBatch();
   };
 
   const handleToggleContextMode = () => {
@@ -572,6 +590,22 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            onClick={() => handleFontSizeChange(-1)}
+            title="Decrease font size"
+            disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent font-mono text-[10px] leading-none w-4 text-center"
+          >
+            A-
+          </button>
+          <button
+            onClick={() => handleFontSizeChange(1)}
+            title="Increase font size"
+            disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent font-mono text-[10px] leading-none w-4 text-center"
+          >
+            A+
+          </button>
           <button
             onClick={handleRunCommand}
             className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-500 transition-colors cursor-pointer"

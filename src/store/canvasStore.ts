@@ -63,6 +63,9 @@ export interface CanvasNode {
     attachedMemoryIds?: string[];
     attachedFacts?: AttachedFact[];
     minimized?: boolean;
+    // Per-node override of the global default terminal font size (settingsStore). Undefined
+    // means "use the global default".
+    terminalFontSize?: number;
   };
 }
 
@@ -344,7 +347,8 @@ export const useCanvasStore = create<CanvasState>()(
       case "terminalNode":
         label = "Terminal Console";
         data = { label, command: "echo hello", isRunning: false, status: "idle" };
-        height = 190;
+        width = 480;
+        height = 320;
         break;
       case "actionContainerNode":
         label = "Pipeline Container";
