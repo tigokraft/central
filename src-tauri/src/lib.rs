@@ -66,6 +66,7 @@ pub fn run() {
             git_engine::rollback_worktree,
             git_engine::get_repo_head,
             git_engine::get_git_diff,
+            git_engine::get_diff_for_commit,
             ephemeral::run_ephemeral_command,
             mcp::commands::mcp_connect_server,
             mcp::commands::mcp_disconnect_server,
