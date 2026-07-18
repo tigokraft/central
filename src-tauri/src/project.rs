@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{Repository, Signature};
@@ -250,8 +251,19 @@ fn default_graph_json() -> serde_json::Value {
     serde_json::json!({ "nodes": [], "edges": [], "viewport": { "x": 0, "y": 0, "zoom": 1 } })
 }
 
+// Guarantees a unique pipeline id even when two pipelines with the same name are created
+// within the same millisecond (e.g. duplicating a pipeline right after ensure_pipelines_at
+// seeds "Main" — both would otherwise derive "main-<same timestamp>").
+static PIPELINE_ID_SEQ: AtomicU64 = AtomicU64::new(0);
+
 fn new_pipeline_id(name: &str) -> String {
-    format!("{}-{}", sanitize_id(&name.to_lowercase()), now_millis())
+    let seq = PIPELINE_ID_SEQ.fetch_add(1, Ordering::SeqCst);
+    format!(
+        "{}-{}-{}",
+        sanitize_id(&name.to_lowercase()),
+        now_millis(),
+        seq
+    )
 }
 
 fn pipelines_dir_at(root: &Path, project_id: &str) -> PathBuf {
