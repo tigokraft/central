@@ -5,6 +5,7 @@ mod mcp;
 pub mod memory;
 mod project;
 mod pty_manager;
+mod workspace_fs;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -42,6 +43,7 @@ pub fn run() {
         .manage(git_engine::GitEngineState::default())
         .manage(mcp::McpManagerState::default())
         .manage(ProjectState::default())
+        .manage(workspace_fs::WorkspaceWatcherState::default())
         .setup(|_app| {
             #[cfg(target_os = "windows")]
             {
@@ -87,6 +89,15 @@ pub fn run() {
             project::get_default_projects_location,
             project::set_default_projects_location,
             project::pick_folder,
+            workspace_fs::list_dir,
+            workspace_fs::read_file,
+            workspace_fs::write_file,
+            workspace_fs::create_file,
+            workspace_fs::create_dir,
+            workspace_fs::rename_path,
+            workspace_fs::delete_path,
+            workspace_fs::start_workspace_watcher,
+            workspace_fs::stop_workspace_watcher,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
