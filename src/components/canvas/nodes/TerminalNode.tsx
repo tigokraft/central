@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useDrag } from "@use-gesture/react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -11,6 +12,8 @@ import {
   Eraser,
   ChevronUp,
   ChevronDown,
+  Maximize2,
+  Minimize2,
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -126,6 +129,21 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
   const updateNodeDimensions = useCanvasStore((state) => state.updateNodeDimensions);
   const logTerminalCommand = useCanvasStore((state) => state.logTerminalCommand);
+  const focusedNodeId = useCanvasStore((state) => state.focusedNodeId);
+  const setFocusedNodeId = useCanvasStore((state) => state.setFocusedNodeId);
+  const isFocused = focusedNodeId === id;
+
+  // Card content (title bar, xterm view, PTY subscriptions) always renders into this single
+  // detached div. Its *children* are owned by React via the portal below and never
+  // unmount/remount across focus toggles; only the div itself gets physically reparented
+  // (plain DOM appendChild, outside React) between the in-canvas anchor and document.body.
+  // This is what lets focus mode expand/collapse without tearing down the live xterm
+  // instance or its PTY session — see the reparenting effect further down.
+  const portalHostRef = useRef<HTMLDivElement | null>(null);
+  if (!portalHostRef.current) {
+    portalHostRef.current = document.createElement("div");
+  }
+  const anchorRef = useRef<HTMLDivElement>(null);
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const termInstance = useRef<Terminal | null>(null);
@@ -271,10 +289,47 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     };
   }, [id, updateNodeData]);
 
+  // Physically relocates the (always-mounted) portal host between the in-canvas anchor and
+  // document.body as focus mode toggles. Plain DOM ops, not React state — React only ever
+  // sees the host's children (via the portal below), so this never unmounts the xterm view.
+  useEffect(() => {
+    const host = portalHostRef.current;
+    if (!host) return;
+    if (isFocused) {
+      host.className = "fixed inset-8 z-50";
+      document.body.appendChild(host);
+    } else {
+      host.className = "w-full h-full";
+      anchorRef.current?.appendChild(host);
+    }
+  }, [isFocused]);
+
+  // Removes the portal host from wherever it currently lives when this node unmounts (e.g.
+  // deleted from the canvas) — React itself only tears down the host's children, since the
+  // host was attached via plain appendChild rather than as part of the React tree.
+  useEffect(() => {
+    return () => {
+      portalHostRef.current?.remove();
+      if (useCanvasStore.getState().focusedNodeId === id) setFocusedNodeId(null);
+    };
+  }, [id, setFocusedNodeId]);
+
+  // Esc exits focus mode regardless of what currently has DOM focus (the xterm textarea, a
+  // title bar button, ...). Only attached while focused, so it never competes with other Esc
+  // handling elsewhere (e.g. the search bar's own Escape-to-close).
+  useEffect(() => {
+    if (!isFocused) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocusedNodeId(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFocused, setFocusedNodeId]);
+
   // Re-fits the terminal's rows/cols to the card's current size (manual resize, minimize,
-  // or restore) and lets the backend PTY know so the shell's own notion of its window size
-  // stays in sync. Skipped while minimized, since the display is hidden and its size is
-  // meaningless until it's restored.
+  // restore, or focus mode toggle) and lets the backend PTY know so the shell's own notion
+  // of its window size stays in sync. Skipped while minimized, since the display is hidden
+  // and its size is meaningless until it's restored.
   useEffect(() => {
     if (data.minimized) return;
     const fitAddon = fitAddonRef.current;
@@ -289,7 +344,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, [id, node.width, node.height, data.minimized]);
+  }, [id, node.width, node.height, data.minimized, isFocused]);
 
   // Focuses the search input as soon as the search bar mounts.
   useEffect(() => {
@@ -464,29 +519,35 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     statusText = "Success";
   }
 
-  return (
+  const card = (
     <div className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-lg shadow-panel overflow-hidden flex flex-col transition-colors hover:border-emerald-500/50 select-none">
-      {/* Sockets - Top and Bottom handles for TerminalNode */}
-      <Port
-        nodeId={id}
-        handleId="trigger"
-        type="target"
-        className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2"
-      />
-      <Port
-        nodeId={id}
-        handleId="done"
-        type="source"
-        className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2"
-      />
-      {/* Dedicated socket for MemoryNode context cables */}
-      <Port
-        nodeId={id}
-        handleId="context"
-        type="target"
-        color="neutral"
-        className="absolute -left-1.5 top-1/2 -translate-y-1/2"
-      />
+      {/* Sockets - Top and Bottom handles for TerminalNode. Hidden in focus mode: the
+          overlay isn't positioned in canvas space, so a cable endpoint here would be
+          meaningless. */}
+      {!isFocused && (
+        <>
+          <Port
+            nodeId={id}
+            handleId="trigger"
+            type="target"
+            className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2"
+          />
+          <Port
+            nodeId={id}
+            handleId="done"
+            type="source"
+            className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2"
+          />
+          {/* Dedicated socket for MemoryNode context cables */}
+          <Port
+            nodeId={id}
+            handleId="context"
+            type="target"
+            color="neutral"
+            className="absolute -left-1.5 top-1/2 -translate-y-1/2"
+          />
+        </>
+      )}
 
       {/* Terminal Title Bar */}
       <div className="bg-slate-950 px-3 py-2 flex items-center justify-between border-b border-slate-800 shrink-0">
@@ -520,6 +581,13 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
             className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
           >
             {data.minimized ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+          </button>
+          <button
+            onClick={() => setFocusedNodeId(isFocused ? null : id)}
+            title={isFocused ? "Exit Focus (Esc)" : "Focus Mode"}
+            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+          >
+            {isFocused ? <Minimize2 size={10} /> : <Maximize2 size={10} />}
           </button>
         </div>
       </div>
@@ -631,8 +699,9 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         <div ref={terminalRef} className="w-full h-full overflow-hidden" data-nodrag />
       </div>
 
-      {/* Resize Handle */}
-      {!data.minimized && (
+      {/* Resize Handle - hidden in focus mode, since that's an ephemeral overlay size, not
+          the node's real stored dimensions. */}
+      {!data.minimized && !isFocused && (
         <div
           className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-se-resize resize-handle flex items-end justify-end p-0.5 z-40"
           {...(bindResize() as any)}
@@ -644,5 +713,26 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         </div>
       )}
     </div>
+  );
+
+  return (
+    <>
+      {/* Occupies the node's normal in-canvas slot (sized by CanvasNodeWrapper). The portal
+          host below is appended as its child while unfocused, and moved out to document.body
+          while focused - see the reparenting effect above. */}
+      <div ref={anchorRef} className="w-full h-full" />
+      {createPortal(
+        <>
+          {isFocused && (
+            <div
+              className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+              onClick={() => setFocusedNodeId(null)}
+            />
+          )}
+          {card}
+        </>,
+        portalHostRef.current
+      )}
+    </>
   );
 }
