@@ -13,11 +13,81 @@ use tauri::{AppHandle, Emitter, Manager, State};
 // exit event for the wrong, currently-live PTY instance.
 static PTY_INSTANCE_SEQ: AtomicU64 = AtomicU64::new(0);
 
+// Kept small enough to be cheap to hold per session, large enough to cover what a "quiet"
+// terminal's status strip needs plus a useful backlog when the user expands it to live.
+const SCROLLBACK_CAPACITY: usize = 64 * 1024;
+
+// Fixed-capacity byte ring buffer of a PTY session's raw output, kept regardless of display
+// mode so expanding a quiet terminal to live can replay its backlog. Bytes beyond the
+// capacity are silently dropped (oldest first) rather than growing unbounded.
+pub struct ScrollbackBuffer {
+    buf: Vec<u8>,
+    capacity: usize,
+    // Index the *next* write lands on.
+    write_pos: usize,
+    // Number of valid bytes currently stored; saturates at capacity once the buffer wraps.
+    len: usize,
+}
+
+impl ScrollbackBuffer {
+    fn new(capacity: usize) -> Self {
+        Self {
+            buf: vec![0u8; capacity],
+            capacity,
+            write_pos: 0,
+            len: 0,
+        }
+    }
+
+    fn append(&mut self, data: &[u8]) {
+        if data.is_empty() || self.capacity == 0 {
+            return;
+        }
+        // Only the trailing `capacity` bytes could ever survive in the buffer, so a chunk
+        // larger than that can be truncated up front instead of writing bytes that would
+        // just get overwritten again before drain_ordered ever sees them.
+        let data = if data.len() > self.capacity {
+            &data[data.len() - self.capacity..]
+        } else {
+            data
+        };
+
+        let space_to_end = self.capacity - self.write_pos;
+        if data.len() <= space_to_end {
+            self.buf[self.write_pos..self.write_pos + data.len()].copy_from_slice(data);
+        } else {
+            self.buf[self.write_pos..].copy_from_slice(&data[..space_to_end]);
+            self.buf[..data.len() - space_to_end].copy_from_slice(&data[space_to_end..]);
+        }
+        self.write_pos = (self.write_pos + data.len()) % self.capacity;
+        self.len = (self.len + data.len()).min(self.capacity);
+    }
+
+    // Discards all currently buffered bytes without shrinking the underlying allocation.
+    fn clear(&mut self) {
+        self.write_pos = 0;
+        self.len = 0;
+    }
+
+    // Returns the buffered bytes in write order (oldest first).
+    fn drain_ordered(&self) -> Vec<u8> {
+        if self.len < self.capacity {
+            self.buf[..self.len].to_vec()
+        } else {
+            let mut out = Vec::with_capacity(self.capacity);
+            out.extend_from_slice(&self.buf[self.write_pos..]);
+            out.extend_from_slice(&self.buf[..self.write_pos]);
+            out
+        }
+    }
+}
+
 pub struct PtyProcess {
     pub master: Box<dyn MasterPty + Send>,
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     pub instance_id: u64,
+    pub scrollback: Arc<Mutex<ScrollbackBuffer>>,
 }
 
 #[derive(Default)]
@@ -97,6 +167,7 @@ pub fn spawn_pty(
     let child_boxed: Box<dyn Child + Send + Sync> = child;
     let child_shared = Arc::new(Mutex::new(child_boxed));
     let instance_id = PTY_INSTANCE_SEQ.fetch_add(1, Ordering::SeqCst);
+    let scrollback_shared = Arc::new(Mutex::new(ScrollbackBuffer::new(SCROLLBACK_CAPACITY)));
 
     // Store PTY process information
     {
@@ -108,6 +179,7 @@ pub fn spawn_pty(
                 writer: writer_shared.clone(),
                 child: child_shared.clone(),
                 instance_id,
+                scrollback: scrollback_shared.clone(),
             },
         );
     }
@@ -121,6 +193,9 @@ pub fn spawn_pty(
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF
                 Ok(n) => {
+                    // Recorded regardless of display mode — a quiet terminal expanded to
+                    // live later still needs its backlog.
+                    scrollback_shared.lock().unwrap().append(&buf[..n]);
                     let data = String::from_utf8_lossy(&buf[..n]).to_string();
                     let payload = PtyOutputPayload {
                         node_id: node_id_clone.clone(),
@@ -207,6 +282,28 @@ pub fn resize_pty(
 }
 
 #[tauri::command]
+pub fn get_pty_scrollback(node_id: String, state: State<'_, PtyManager>) -> Result<String, String> {
+    let processes = state.processes.lock().unwrap();
+    if let Some(proc) = processes.get(&node_id) {
+        let bytes = proc.scrollback.lock().unwrap().drain_ordered();
+        Ok(String::from_utf8_lossy(&bytes).to_string())
+    } else {
+        Err(format!("No active PTY session for node ID: {}", node_id))
+    }
+}
+
+#[tauri::command]
+pub fn clear_pty_scrollback(node_id: String, state: State<'_, PtyManager>) -> Result<(), String> {
+    let processes = state.processes.lock().unwrap();
+    if let Some(proc) = processes.get(&node_id) {
+        proc.scrollback.lock().unwrap().clear();
+        Ok(())
+    } else {
+        Err(format!("No active PTY session for node ID: {}", node_id))
+    }
+}
+
+#[tauri::command]
 pub fn destroy_pty(node_id: String, state: State<'_, PtyManager>) -> Result<(), String> {
     let proc = {
         let mut processes = state.processes.lock().unwrap();
@@ -231,5 +328,53 @@ mod tests {
         let cwd = Path::new("/tmp/some-project");
         let cmd = build_pty_command("bash", cwd);
         assert_eq!(cmd.get_cwd().map(|s| s.as_os_str()), Some(cwd.as_os_str()));
+    }
+
+    #[test]
+    fn scrollback_drain_is_empty_before_any_append() {
+        let buf = ScrollbackBuffer::new(8);
+        assert_eq!(buf.drain_ordered(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn scrollback_drain_returns_appended_bytes_in_order_below_capacity() {
+        let mut buf = ScrollbackBuffer::new(8);
+        buf.append(b"ab");
+        buf.append(b"cd");
+        assert_eq!(buf.drain_ordered(), b"abcd".to_vec());
+    }
+
+    #[test]
+    fn scrollback_wraparound_keeps_only_the_most_recent_capacity_bytes_in_order() {
+        let mut buf = ScrollbackBuffer::new(8);
+        buf.append(b"abcdefgh"); // exactly fills the buffer
+        buf.append(b"ijkl"); // wraps, overwriting "abcd"
+        assert_eq!(buf.drain_ordered(), b"efghijkl".to_vec());
+    }
+
+    #[test]
+    fn scrollback_single_append_larger_than_capacity_keeps_only_the_tail() {
+        let mut buf = ScrollbackBuffer::new(4);
+        buf.append(b"0123456789");
+        assert_eq!(buf.drain_ordered(), b"6789".to_vec());
+    }
+
+    #[test]
+    fn scrollback_many_small_appends_wrap_correctly() {
+        let mut buf = ScrollbackBuffer::new(5);
+        for byte in b"abcdefghij" {
+            buf.append(&[*byte]);
+        }
+        assert_eq!(buf.drain_ordered(), b"fghij".to_vec());
+    }
+
+    #[test]
+    fn scrollback_clear_empties_the_buffer_and_appends_after_clear_start_fresh() {
+        let mut buf = ScrollbackBuffer::new(8);
+        buf.append(b"abcdefgh");
+        buf.clear();
+        assert_eq!(buf.drain_ordered(), Vec::<u8>::new());
+        buf.append(b"ij");
+        assert_eq!(buf.drain_ordered(), b"ij".to_vec());
     }
 }

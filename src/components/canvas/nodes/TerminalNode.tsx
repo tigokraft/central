@@ -14,11 +14,20 @@ import {
   ChevronDown,
   Maximize2,
   Minimize2,
+  Eye,
+  EyeOff,
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCanvasStore, CanvasNode, beginHistoryBatch, endHistoryBatch } from "../../../store/canvasStore";
+import {
+  useCanvasStore,
+  CanvasNode,
+  TerminalDisplayMode,
+  resolveTerminalDisplayMode,
+  beginHistoryBatch,
+  endHistoryBatch,
+} from "../../../store/canvasStore";
 import {
   useSettingsStore,
   clampTerminalFontSize,
@@ -80,6 +89,17 @@ function buildCommandWithContext(command: string, nodeData: CanvasNode["data"]):
 // Collapsed height of a minimized terminal card: just tall enough for the title bar.
 const MINIMIZED_HEIGHT = 36;
 
+// Cols/rows used to spawn a PTY session before any xterm exists to measure a real fitted
+// size from (e.g. a pipeline-created terminal that defaults to quiet). Corrected via
+// resize_pty as soon as a live xterm mounts and fits itself to the card.
+const DEFAULT_PTY_COLS = 80;
+const DEFAULT_PTY_ROWS = 24;
+
+// How much raw (ANSI-included) trailing output the quiet-mode status strip keeps around to
+// derive its last-few-lines preview from.
+const QUIET_TAIL_RAW_CHAR_CAP = 4000;
+const QUIET_TAIL_LINE_COUNT = 2;
+
 // Unique id generator for terminalRunHistory entries — a node produces many lines over its
 // lifetime (unlike ephemeral runs, which get one archive entry each), so entries key off a
 // running sequence rather than just a timestamp to stay collision-free within the same ms.
@@ -130,6 +150,27 @@ function extractSubmittedLines(input: string, bufferRef: { current: string }): s
   return lines;
 }
 
+// Strips ANSI/CSI/OSC escape sequences from raw PTY output so the quiet-mode status strip
+// can show plain text without control-character noise. Deliberately simple — it only needs
+// to be good enough for a two-line preview, not a full terminal emulator.
+function stripAnsiCodes(text: string): string {
+  return text
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "") // OSC ... BEL or ST
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "") // CSI ... final byte
+    .replace(/\x1b[()][A-Za-z0-9]/g, "") // charset select
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ""); // remaining control chars (keeps \t \n \r)
+}
+
+// Reduces already ANSI-stripped text down to its last `count` non-empty lines, for the
+// quiet-mode status strip's output preview.
+function lastNonEmptyLines(text: string, count: number): string[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.slice(-count);
+}
+
 export default function TerminalNode({ node }: TerminalNodeProps) {
   const { id, data } = node;
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
@@ -140,6 +181,11 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   const isFocused = focusedNodeId === id;
   const defaultTerminalFontSize = useSettingsStore((state) => state.defaultTerminalFontSize);
   const fontSize = clampTerminalFontSize(data.terminalFontSize ?? defaultTerminalFontSize);
+  const displayMode = resolveTerminalDisplayMode(data);
+  // The xterm instance only exists while live — quiet and minimized both render without one,
+  // which is the point of this feature: a dozen idle live xterms are expensive, a dozen
+  // status strips are not.
+  const xtermMounted = displayMode === "live";
 
   // Card content (title bar, xterm view, PTY subscriptions) always renders into this single
   // detached div. Its *children* are owned by React via the portal below and never
@@ -170,9 +216,118 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   const [searchResult, setSearchResult] = useState<ISearchResultChangeEvent | null>(null);
   // Remembers the expanded height so restoring from minimized doesn't have to guess it.
   const preMinimizeHeightRef = useRef(node.height);
+  // Remembers which mode (live or quiet) to restore to when un-minimizing, since displayMode
+  // itself only has room for one value at a time.
+  const preMinimizeModeRef = useRef<Exclude<TerminalDisplayMode, "minimized">>("live");
 
+  // Routes incoming PTY output to wherever it currently belongs: nowhere (quiet, no live
+  // xterm exists), a queue (a fresh xterm is mid-hydration from scrollback), or straight into
+  // the live xterm. Reassigned by the xterm-mount effect below.
+  const outputSinkRef = useRef<(chunk: string) => void>(() => {});
+  // Last ~QUIET_TAIL_RAW_CHAR_CAP raw chars of output, kept up to date only while quiet — in
+  // live mode the xterm itself is the source of truth, so there's no need to duplicate that
+  // bookkeeping on every chunk for a view nobody's rendering.
+  const quietTailBufferRef = useRef("");
+  const [quietTailLines, setQuietTailLines] = useState<string[]>([]);
+  const [lastSubmittedCommand, setLastSubmittedCommand] = useState<string | undefined>(undefined);
+
+  // PTY session lifecycle: spawned once per node and kept alive across displayMode changes,
+  // so toggling live/quiet/minimized never interrupts the running shell or its process tree.
   useEffect(() => {
-    if (!terminalRef.current) return;
+    // StrictMode mounts this effect, tears it down, then mounts it again — and cleanup runs
+    // synchronously, before the `await listen(...)` below has a chance to resolve. Without
+    // this flag, the first run's cleanup would find `unlistenOutput` still null (nothing to
+    // unsubscribe yet) and the listener it's about to register would leak forever, doubling
+    // every event once the second run's listener is also live. Checking `cancelled` right
+    // after each await lets a listener that resolves too late unsubscribe itself instead.
+    let cancelled = false;
+    let unlistenOutput: (() => void) | null = null;
+    let unlistenExit: (() => void) | null = null;
+
+    const setupPty = async () => {
+      try {
+        // Subscribe to PTY output stream. Always active regardless of display mode: quiet
+        // terminals still need live output to keep their status strip's tail lines current,
+        // and a live xterm mounting later needs this same subscription redirected into it
+        // (see outputSinkRef / the xterm-mount effect).
+        const offOutput = await listen<{ node_id: string; data: string }>(
+          "pty-output",
+          (event) => {
+            if (event.payload.node_id !== id) return;
+            const chunk = event.payload.data;
+
+            // Reads current mode fresh rather than closing over `data` (fixed at mount
+            // time), so a later displayMode toggle is reflected without re-subscribing.
+            const freshNode = useCanvasStore.getState().nodes.find((n) => n.id === id);
+            const freshMode = freshNode ? resolveTerminalDisplayMode(freshNode.data) : "live";
+            if (freshMode === "quiet") {
+              quietTailBufferRef.current = (quietTailBufferRef.current + chunk).slice(
+                -QUIET_TAIL_RAW_CHAR_CAP
+              );
+              setQuietTailLines(
+                lastNonEmptyLines(stripAnsiCodes(quietTailBufferRef.current), QUIET_TAIL_LINE_COUNT)
+              );
+            }
+
+            outputSinkRef.current(chunk);
+          }
+        );
+        if (cancelled) {
+          offOutput();
+          return;
+        }
+        unlistenOutput = offOutput;
+
+        // Subscribe to PTY exit notification
+        const offExit = await listen<{ node_id: string }>(
+          "pty-exit",
+          (event) => {
+            if (event.payload.node_id === id) {
+              termInstance.current?.writeln("\r\n\x1b[31m[Process Exited]\x1b[0m");
+              setPtyStatus("idle");
+              updateNodeData(id, { isRunning: false, status: "idle" });
+            }
+          }
+        );
+        if (cancelled) {
+          offExit();
+          return;
+        }
+        unlistenExit = offExit;
+
+        // Spawn interactive shell. Uses fixed defaults rather than reading a live xterm's
+        // size, since a quiet-by-default (e.g. pipeline) terminal may never have one; a live
+        // xterm mounting later corrects the size via resize_pty once it fits itself.
+        await invoke("spawn_pty", { nodeId: id, cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS });
+        if (cancelled) return;
+        ptyReadyRef.current = true;
+        setPtyStatus("idle");
+        updateNodeData(id, { status: "idle" });
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Failed to initialize PTY:", err);
+        setPtyStatus("error");
+        updateNodeData(id, { status: "error" });
+      }
+    };
+
+    setupPty();
+
+    return () => {
+      cancelled = true;
+      ptyReadyRef.current = false;
+      if (unlistenOutput) unlistenOutput();
+      if (unlistenExit) unlistenExit();
+      invoke("destroy_pty", { nodeId: id }).catch(console.error);
+    };
+  }, [id, updateNodeData]);
+
+  // xterm instantiation: created only while live, disposed the moment displayMode moves away
+  // from it. Recreated fresh (not reused) each time the node goes back to live — its content
+  // is rehydrated from the backend's scrollback ring buffer rather than kept around client
+  // side, since the PTY session (and its scrollback) already persists independently above.
+  useEffect(() => {
+    if (!xtermMounted || !terminalRef.current) return;
 
     const term = new Terminal({
       theme: {
@@ -228,6 +383,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         const nodeLabel = useCanvasStore.getState().nodes.find((n) => n.id === id)?.data.label || "Terminal Console";
+        setLastSubmittedCommand(trimmed);
         logTerminalCommand({
           id: nextHistoryEntryId(id),
           nodeId: id,
@@ -243,61 +399,46 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
       });
     });
 
-    let unlistenOutput: (() => void) | null = null;
-    let unlistenExit: (() => void) | null = null;
-
-    const setupPty = async () => {
-      try {
-        const cols = term.cols || 40;
-        const rows = term.rows || 8;
-
-        // Subscribe to PTY output stream
-        unlistenOutput = await listen<{ node_id: string; data: string }>(
-          "pty-output",
-          (event) => {
-            if (event.payload.node_id === id) {
-              term.write(event.payload.data);
-            }
-          }
-        );
-
-        // Subscribe to PTY exit notification
-        unlistenExit = await listen<{ node_id: string }>(
-          "pty-exit",
-          (event) => {
-            if (event.payload.node_id === id) {
-              term.writeln("\r\n\x1b[31m[Process Exited]\x1b[0m");
-              setPtyStatus("idle");
-              updateNodeData(id, { isRunning: false, status: "idle" });
-            }
-          }
-        );
-
-        // Spawn interactive shell
-        await invoke("spawn_pty", { nodeId: id, cols, rows });
-        ptyReadyRef.current = true;
-        setPtyStatus("idle");
-        updateNodeData(id, { status: "idle" });
-      } catch (err) {
-        console.error("Failed to initialize PTY:", err);
-        term.writeln(`\r\n\x1b[31m[Error] Failed to initialize PTY: ${err}\x1b[0m`);
-        setPtyStatus("error");
-        updateNodeData(id, { status: "error" });
-      }
+    // Hydrates the fresh xterm from the backend's scrollback ring buffer. Queueing starts
+    // synchronously — before the scrollback fetch is even sent — so any output arriving
+    // while the fetch is in flight is neither lost nor written ahead of the backlog it
+    // belongs after; it's replayed in order once the backlog itself has been written.
+    let cancelled = false;
+    const queued: string[] = [];
+    outputSinkRef.current = (chunk) => {
+      queued.push(chunk);
     };
 
-    setupPty();
+    const flushQueueAndGoLive = () => {
+      if (cancelled) return;
+      for (const chunk of queued) term.write(chunk);
+      queued.length = 0;
+      outputSinkRef.current = (chunk) => term.write(chunk);
+    };
+
+    invoke<string>("get_pty_scrollback", { nodeId: id })
+      .then((backlog) => {
+        if (cancelled) return;
+        if (backlog) term.write(backlog);
+        flushQueueAndGoLive();
+      })
+      .catch(() => {
+        // No PTY session registered yet (spawn_pty hasn't resolved) — nothing to backfill,
+        // just go live from here.
+        flushQueueAndGoLive();
+      });
 
     return () => {
-      ptyReadyRef.current = false;
+      cancelled = true;
+      outputSinkRef.current = () => {};
       onDataDisposable.dispose();
       onSearchResultsDisposable.dispose();
-      if (unlistenOutput) unlistenOutput();
-      if (unlistenExit) unlistenExit();
-      invoke("destroy_pty", { nodeId: id }).catch(console.error);
       term.dispose();
+      termInstance.current = null;
+      fitAddonRef.current = null;
+      searchAddonRef.current = null;
     };
-  }, [id, updateNodeData]);
+  }, [id, xtermMounted, updateNodeData, logTerminalCommand]);
 
   // Physically relocates the (always-mounted) portal host between the in-canvas anchor and
   // document.body as focus mode toggles. Plain DOM ops, not React state — React only ever
@@ -338,10 +479,10 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
 
   // Re-fits the terminal's rows/cols to the card's current size (manual resize, minimize,
   // restore, focus mode toggle, or a font-size change) and lets the backend PTY know so the
-  // shell's own notion of its window size stays in sync. Skipped while minimized, since the
-  // display is hidden and its size is meaningless until it's restored.
+  // shell's own notion of its window size stays in sync. Skipped while minimized or quiet,
+  // since there's no live xterm to fit in either case.
   useEffect(() => {
-    if (data.minimized) return;
+    if (displayMode !== "live") return;
     const fitAddon = fitAddonRef.current;
     const term = termInstance.current;
     if (!fitAddon || !term) return;
@@ -356,7 +497,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, [id, node.width, node.height, data.minimized, isFocused, fontSize]);
+  }, [id, node.width, node.height, displayMode, isFocused, fontSize]);
 
   // Focuses the search input as soon as the search bar mounts.
   useEffect(() => {
@@ -371,10 +512,11 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     if (data.isRunning && data.command) {
       setPtyStatus("running");
       const finalCommand = buildCommandWithContext(data.command, data);
+      setLastSubmittedCommand(data.command);
       logTerminalCommand({
         id: nextHistoryEntryId(id),
-        nodeId: id,
         nodeLabel: data.label || "Terminal Console",
+        nodeId: id,
         command: data.command,
         submittedAt: Date.now(),
       });
@@ -390,6 +532,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     if (data.command) {
       const finalCommand = buildCommandWithContext(data.command, data);
       setPtyStatus("running");
+      setLastSubmittedCommand(data.command);
       updateNodeData(id, { isRunning: true, status: "running" });
       invoke("write_pty", { nodeId: id, data: finalCommand + "\r" }).catch((err) => {
         console.error(err);
@@ -456,6 +599,11 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
 
   const handleClearHistory = () => {
     termInstance.current?.clear();
+    // Also clears the backend scrollback ring buffer — otherwise toggling to quiet and back
+    // to live would replay the very output this button just cleared.
+    quietTailBufferRef.current = "";
+    setQuietTailLines([]);
+    invoke("clear_pty_scrollback", { nodeId: id }).catch(console.error);
   };
 
   // Highlights every match while marking the current one, matching the terminal's emerald accent.
@@ -498,14 +646,24 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
 
   const handleToggleMinimize = () => {
     beginHistoryBatch();
-    if (data.minimized) {
+    if (displayMode === "minimized") {
       updateNodeDimensions(id, node.width, preMinimizeHeightRef.current || 190);
-      updateNodeData(id, { minimized: false });
+      updateNodeData(id, { displayMode: preMinimizeModeRef.current });
     } else {
+      preMinimizeModeRef.current = displayMode;
       preMinimizeHeightRef.current = node.height;
       updateNodeDimensions(id, node.width, MINIMIZED_HEIGHT);
-      updateNodeData(id, { minimized: true });
+      updateNodeData(id, { displayMode: "minimized" });
     }
+    endHistoryBatch();
+  };
+
+  // Toggles between live and quiet. No-op while minimized — the minimize/restore control
+  // above is what governs that state, restoring back to whichever of live/quiet was active.
+  const handleToggleLiveQuiet = () => {
+    if (displayMode === "minimized") return;
+    beginHistoryBatch();
+    updateNodeData(id, { displayMode: displayMode === "quiet" ? "live" : "quiet" });
     endHistoryBatch();
   };
 
@@ -614,12 +772,21 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
           >
             <Play size={10} />
           </button>
+          {displayMode !== "minimized" && (
+            <button
+              onClick={handleToggleLiveQuiet}
+              title={displayMode === "quiet" ? "Switch to live view" : "Switch to quiet mode"}
+              className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+            >
+              {displayMode === "quiet" ? <EyeOff size={10} /> : <Eye size={10} />}
+            </button>
+          )}
           <button
             onClick={handleToggleMinimize}
-            title={data.minimized ? "Restore" : "Minimize"}
+            title={displayMode === "minimized" ? "Restore" : "Minimize"}
             className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
           >
-            {data.minimized ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+            {displayMode === "minimized" ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
           </button>
           <button
             onClick={() => setFocusedNodeId(isFocused ? null : id)}
@@ -631,7 +798,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         </div>
       </div>
 
-      {!data.minimized && searchOpen && (
+      {displayMode === "live" && searchOpen && (
         <div className="bg-slate-950/80 px-2 py-1 flex items-center gap-1.5 border-b border-slate-800/80 shrink-0">
           <input
             ref={searchInputRef}
@@ -682,7 +849,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         </div>
       )}
 
-      {!data.minimized && (
+      {displayMode === "live" && (
         <>
           {/* Context Injection HUD */}
           <div className="bg-slate-950/60 px-2 py-1 flex items-center justify-between gap-1.5 border-b border-slate-800/80 shrink-0">
@@ -729,18 +896,41 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         </>
       )}
 
-      {/* Terminal Display - kept mounted while minimized (just hidden) so the live xterm
-          instance and its PTY subscription never have to be torn down and rebuilt. */}
-      <div
-        className="p-2 bg-slate-950 font-mono text-xs flex-1 min-h-0"
-        style={data.minimized ? { display: "none" } : undefined}
-      >
-        <div ref={terminalRef} className="w-full h-full overflow-hidden" data-nodrag />
-      </div>
+      {/* Terminal Display - only mounted while live; see the xterm-mount effect above for
+          why quiet/minimized don't keep an xterm instance around. */}
+      {displayMode === "live" && (
+        <div className="p-2 bg-slate-950 font-mono text-xs flex-1 min-h-0">
+          <div ref={terminalRef} className="w-full h-full overflow-hidden" data-nodrag />
+        </div>
+      )}
+
+      {/* Quiet status strip - last submitted command, running/exit indicator, and a couple
+          lines of ANSI-stripped output tail. No xterm mounted behind this. */}
+      {displayMode === "quiet" && (
+        <div className="p-2 bg-slate-950 font-mono text-[10px] text-slate-400 flex-1 min-h-0 flex flex-col gap-1 overflow-hidden">
+          <div className="flex items-center gap-1.5 text-slate-300 shrink-0 min-w-0">
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor}`} />
+            <span className="truncate">
+              {lastSubmittedCommand ? `$ ${lastSubmittedCommand}` : "No command run yet"}
+            </span>
+          </div>
+          <div className="flex-1 min-h-0 overflow-hidden leading-tight">
+            {quietTailLines.length > 0 ? (
+              quietTailLines.map((line, i) => (
+                <div key={i} className="truncate text-slate-500">
+                  {line}
+                </div>
+              ))
+            ) : (
+              <div className="italic text-slate-600">No output yet</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Resize Handle - hidden in focus mode, since that's an ephemeral overlay size, not
           the node's real stored dimensions. */}
-      {!data.minimized && !isFocused && (
+      {displayMode !== "minimized" && !isFocused && (
         <div
           className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-se-resize resize-handle flex items-end justify-end p-0.5 z-40"
           {...(bindResize() as any)}

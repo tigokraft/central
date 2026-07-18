@@ -3,6 +3,7 @@ import { temporal } from "zundo";
 import { invoke } from "@tauri-apps/api/core";
 import { computeFitViewport, getNodesBounds } from "../lib/canvasGeometry";
 import { viewportController, clampZoom } from "../lib/viewportController";
+import { useUiSettingsStore } from "./uiSettingsStore";
 
 const HISTORY_LIMIT = 100;
 
@@ -22,6 +23,13 @@ export interface AttachedMcpTool {
 }
 
 export type TerminalContextMode = "isolated" | "memory-aware";
+
+// "live" renders a full xterm instance streaming in real time. "quiet" renders a compact
+// status strip instead (no xterm mounted) — used for pipeline/orchestrator terminals where
+// dozens of live xterms would be expensive and nobody is watching raw output. "minimized"
+// collapses the node to just its title bar, independent of whether the hidden body is a live
+// xterm or a quiet strip.
+export type TerminalDisplayMode = "live" | "quiet" | "minimized";
 
 // A fact manually attached to a terminal node via the "Attach .aimem Fact" HUD button,
 // as opposed to one supplied live by a cabled MemoryNode (tracked by attachedMemoryIds).
@@ -62,11 +70,22 @@ export interface CanvasNode {
     contextMode?: TerminalContextMode;
     attachedMemoryIds?: string[];
     attachedFacts?: AttachedFact[];
+    // Legacy pre-displayMode field, still read for backward compatibility with saved
+    // projects: a terminal node persisted before displayMode existed. New code should read
+    // and write displayMode instead; see resolveTerminalDisplayMode.
     minimized?: boolean;
+    displayMode?: TerminalDisplayMode;
     // Per-node override of the global default terminal font size (settingsStore). Undefined
     // means "use the global default".
     terminalFontSize?: number;
   };
+}
+
+// Resolves a terminal node's effective display mode, falling back to the legacy `minimized`
+// boolean for projects saved before displayMode existed.
+export function resolveTerminalDisplayMode(data: CanvasNode["data"]): TerminalDisplayMode {
+  if (data.displayMode) return data.displayMode;
+  return data.minimized ? "minimized" : "live";
 }
 
 // Container node types other nodes can be nested inside via parentId.
@@ -349,12 +368,26 @@ export const useCanvasStore = create<CanvasState>()(
     let height = 150;
 
     switch (type) {
-      case "terminalNode":
+      case "terminalNode": {
         label = "Terminal Console";
-        data = { label, command: "echo hello", isRunning: false, status: "idle" };
+        // Terminals nested inside a frame/container are pipeline or orchestrator output
+        // (see OrchestratorBar and projectTemplates) rather than something a user dropped on
+        // the canvas by hand, so they default to quiet regardless of the project's default.
+        const isPipelineCreated = Boolean(overrides?.parentId);
+        const projectDefault = useUiSettingsStore
+          .getState()
+          .getProjectDefaultTerminalDisplayMode(get().activeProjectId);
+        data = {
+          label,
+          command: "echo hello",
+          isRunning: false,
+          status: "idle",
+          displayMode: isPipelineCreated ? "quiet" : projectDefault,
+        };
         width = 480;
         height = 320;
         break;
+      }
       case "actionContainerNode":
         label = "Pipeline Container";
         data = {

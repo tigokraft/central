@@ -61,6 +61,8 @@ pub fn run() {
             pty_manager::write_pty,
             pty_manager::resize_pty,
             pty_manager::destroy_pty,
+            pty_manager::get_pty_scrollback,
+            pty_manager::clear_pty_scrollback,
             memory::engine::create_memory_record,
             memory::engine::query_memory_graph,
             memory::engine::list_aimem_facts,

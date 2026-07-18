@@ -110,7 +110,7 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
           width: 200,
           height: 190,
           parentId: frameId,
-          data: { label: "Coder", command: "", isRunning: false, status: "idle", role: "coder" },
+          data: { label: "Coder", command: "", isRunning: false, status: "idle", role: "coder", displayMode: "quiet" },
         },
         {
           id: reviewerId,
@@ -120,7 +120,7 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
           width: 200,
           height: 190,
           parentId: frameId,
-          data: { label: "Reviewer", command: "", isRunning: false, status: "idle", role: "reviewer" },
+          data: { label: "Reviewer", command: "", isRunning: false, status: "idle", role: "reviewer", displayMode: "quiet" },
         },
         {
           id: testRunnerId,
@@ -130,7 +130,14 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
           width: 200,
           height: 190,
           parentId: frameId,
-          data: { label: "Test Runner", command: "", isRunning: false, status: "idle", role: "test-runner" },
+          data: {
+            label: "Test Runner",
+            command: "",
+            isRunning: false,
+            status: "idle",
+            role: "test-runner",
+            displayMode: "quiet",
+          },
         },
       ];
 
