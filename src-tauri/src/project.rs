@@ -270,6 +270,30 @@ fn default_projects_base(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(resolve_default_projects_location(&data_dir, &documents_dir))
 }
 
+/// Looks up a project's on-disk workspace folder from the manifest. Git-engine entry points
+/// resolve through this rather than trusting a path string handed to them by the frontend, so
+/// a caller can only ever operate on a workspace that a real project manifest entry vouches for.
+fn workspace_path_for(root: &Path, project_id: &str) -> Result<PathBuf, String> {
+    let projects = read_manifest_at(root)?;
+    let meta = projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| format!("Project '{}' not found", project_id))?;
+    if meta.workspace_path.is_empty() {
+        return Err(format!(
+            "Project '{}' has no workspace yet; open it once to migrate",
+            project_id
+        ));
+    }
+    Ok(PathBuf::from(&meta.workspace_path))
+}
+
+/// AppHandle-bound counterpart of `workspace_path_for`, for git-engine and graph-runner
+/// commands that only receive a `project_id` from the frontend.
+pub fn resolve_project_workspace(app: &AppHandle, project_id: &str) -> Result<PathBuf, String> {
+    workspace_path_for(&projects_root(app)?, project_id)
+}
+
 // --- Tauri commands ---
 
 #[tauri::command]
@@ -534,6 +558,38 @@ mod tests {
         assert_eq!(resolved, documents_dir.join("Central"));
 
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn workspace_path_for_returns_project_workspace() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Lookup Me");
+
+        let resolved = workspace_path_for(&root, &meta.id).unwrap();
+        assert_eq!(resolved, PathBuf::from(&meta.workspace_path));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn workspace_path_for_rejects_unknown_project_id() {
+        let root = temp_root();
+        let result = workspace_path_for(&root, "does-not-exist");
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_path_for_rejects_project_without_workspace() {
+        let root = temp_root();
+        let meta =
+            create_project_at(&root, "Legacy", Path::new(""), WorkspaceKind::Managed).unwrap();
+
+        let result = workspace_path_for(&root, &meta.id);
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

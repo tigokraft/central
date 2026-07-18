@@ -86,6 +86,7 @@ pub struct GraphRunnerState {
 
 struct ExecutionContext {
     app: AppHandle,
+    project_id: String,
     outputs: TokioMutex<HashMap<String, String>>,
     retry_counts: TokioMutex<HashMap<String, u32>>,
     // Serializes re-execution of a given node when multiple failing branches
@@ -125,6 +126,7 @@ fn build_graph(
 fn build_context(
     nodes: Vec<GraphNodeInput>,
     edges: Vec<GraphEdgeInput>,
+    project_id: String,
     app: AppHandle,
 ) -> Result<Arc<ExecutionContext>, String> {
     let (graph, index_of) = build_graph(&nodes, &edges)?;
@@ -136,10 +138,11 @@ fn build_context(
     let node_of: HashMap<String, GraphNodeInput> =
         nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
 
-    let working_dir = crate::git_engine::resolve_repo_root(&app);
+    let working_dir = crate::project::resolve_project_workspace(&app, &project_id)?;
 
     Ok(Arc::new(ExecutionContext {
         app,
+        project_id,
         outputs: TokioMutex::new(HashMap::new()),
         retry_counts: TokioMutex::new(HashMap::new()),
         node_locks,
@@ -154,6 +157,7 @@ fn build_context(
 pub fn execute_graph(
     nodes: Vec<GraphNodeInput>,
     edges: Vec<GraphEdgeInput>,
+    project_id: String,
     app_handle: AppHandle,
     state: State<'_, GraphRunnerState>,
 ) -> Result<(), String> {
@@ -161,7 +165,7 @@ pub fn execute_graph(
         return Err("A pipeline is already running".to_string());
     }
 
-    let ctx = match build_context(nodes, edges, app_handle.clone()) {
+    let ctx = match build_context(nodes, edges, project_id, app_handle.clone()) {
         Ok(ctx) => ctx,
         Err(e) => {
             state.running.store(false, Ordering::SeqCst);
@@ -200,7 +204,7 @@ async fn run_graph(ctx: Arc<ExecutionContext>) -> Result<(), String> {
     let all_ids: Vec<String> = ctx.node_of.keys().cloned().collect();
     ctx.app
         .state::<GitEngineState>()
-        .prepare_run(&ctx.working_dir, &all_ids);
+        .prepare_run(&ctx.project_id, &ctx.working_dir, &all_ids);
 
     let mut completed: HashSet<String> = HashSet::new();
 
@@ -483,7 +487,7 @@ async fn run_action_container(
 fn resolve_exec_dir(ctx: &Arc<ExecutionContext>, node_id: &str) -> PathBuf {
     ctx.app
         .state::<GitEngineState>()
-        .ensure_worktree(&ctx.working_dir, node_id)
+        .ensure_worktree(&ctx.project_id, &ctx.working_dir, node_id)
         .unwrap_or_else(|_| ctx.working_dir.clone())
 }
 
@@ -505,7 +509,7 @@ fn perform_handoffs(ctx: &Arc<ExecutionContext>, node_id: &str) {
             continue;
         }
 
-        if let Ok(Some(result)) = git_state.commit_handoff(node_id, target_id) {
+        if let Ok(Some(result)) = git_state.commit_handoff(&ctx.project_id, node_id, target_id) {
             let payload = CableHandoffPayload {
                 source_node_id: node_id.to_string(),
                 target_node_id: target_id.clone(),
