@@ -354,6 +354,35 @@ pub fn get_git_diff(app: AppHandle) -> Result<String, String> {
     Ok(patch)
 }
 
+/// Renders a single commit's changes (against its first parent) as a unified patch, for the
+/// cable diff-preview popover. The commit is looked up by sha across the whole repo, so it
+/// resolves even when it was made inside a node's ephemeral worktree — worktrees share the
+/// same object database as the main repo.
+#[tauri::command]
+pub fn get_diff_for_commit(app: AppHandle, sha: String) -> Result<String, String> {
+    let repo = Repository::open(resolve_repo_root(&app)).map_err(|e| e.to_string())?;
+    let oid = Oid::from_str(&sha).map_err(|e| e.to_string())?;
+    let commit = repo.find_commit(oid).map_err(|e| e.to_string())?;
+    let tree = commit.tree().map_err(|e| e.to_string())?;
+    let parent_tree = commit.parent(0).and_then(|p| p.tree()).ok();
+
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+        .map_err(|e| e.to_string())?;
+
+    let mut patch = String::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            patch.push(line.origin());
+        }
+        patch.push_str(&String::from_utf8_lossy(line.content()));
+        true
+    })
+    .map_err(|e| e.to_string())?;
+
+    Ok(patch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
