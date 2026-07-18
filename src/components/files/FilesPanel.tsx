@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { FilePlus, FolderPlus, Pencil, Trash2 } from "lucide-react";
+import { FilePlus, FolderPlus, Pencil, Trash2, FolderOpen } from "lucide-react";
 import { useCanvasStore } from "../../store/canvasStore";
 import { useEditorStore } from "../../store/editorStore";
 import { useGitStatusStore, statusFor } from "../../store/gitStatusStore";
@@ -235,6 +236,22 @@ export default function FilesPanel() {
     setContextMenu({ x: e.clientX, y: e.clientY, row });
   };
 
+  const getRevealLabel = () => {
+    const ua = navigator.userAgent;
+    if (ua.includes("Mac")) return "Reveal in Finder";
+    if (ua.includes("Windows")) return "Reveal in File Explorer";
+    return "Reveal in File Manager";
+  };
+
+  const revealPath = async (path: string) => {
+    if (!activeProjectId) return;
+    try {
+      await invoke("show_in_folder", { projectId: activeProjectId, path });
+    } catch (err) {
+      console.error("Failed to reveal path in explorer:", err);
+    }
+  };
+
   const rows: Row[] = [];
   const buildRows = (dir: string, depth: number) => {
     const entries = childrenCache[dir];
@@ -308,7 +325,7 @@ export default function FilesPanel() {
         <div
           onClick={(e) => e.stopPropagation()}
           style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y }}
-          className="w-40 bg-slate-900 border border-slate-800 rounded-lg shadow-overlay py-1 z-50"
+          className="w-44 bg-slate-900 border border-slate-800 rounded-lg shadow-overlay py-1 z-50"
         >
           {(contextMenu.row === null || contextMenu.row.kind === "dir") && (
             <>
@@ -358,6 +375,17 @@ export default function FilesPanel() {
               </button>
             </>
           )}
+          <div className="h-px bg-slate-800 my-1" />
+          <button
+            onClick={() => {
+              void revealPath(contextMenu.row?.path ?? "");
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-slate-100 cursor-pointer"
+          >
+            <FolderOpen size={12} className="text-slate-400" />
+            {getRevealLabel()}
+          </button>
         </div>
       )}
 
