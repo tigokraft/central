@@ -1,7 +1,71 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { useCanvasStore, getHandlePosition, type CableDiffStat } from "../../store/canvasStore";
 import { isRectVisible, getControlPoints, getBezierPath, type Bounds } from "../../lib/canvasGeometry";
 import { edgeDragRegistry } from "../../lib/edgeDragRegistry";
+import Panel from "../ui/Panel";
+
+// Diffs are immutable per commit, so fetched patch text is cached across every badge/edge
+// instance for the lifetime of the app — hovering the same hand-off twice never re-hits IPC.
+const diffCache = new Map<string, string>();
+
+const HOVER_FETCH_DELAY_MS = 250;
+const HIDE_DELAY_MS = 150;
+const POPOVER_WIDTH = 440;
+const POPOVER_MAX_HEIGHT = 320;
+
+function clampPopoverPosition(x: number, y: number) {
+  const maxX = Math.max(8, window.innerWidth - POPOVER_WIDTH - 8);
+  const maxY = Math.max(8, window.innerHeight - POPOVER_MAX_HEIGHT - 8);
+  return { x: Math.min(x, maxX), y: Math.min(y, maxY) };
+}
+
+function DiffLine({ line }: { line: string }) {
+  let colorClass = "text-slate-300";
+  if (line.startsWith("+") && !line.startsWith("+++")) colorClass = "text-emerald-400";
+  else if (line.startsWith("-") && !line.startsWith("---")) colorClass = "text-red-400";
+  else if (line.startsWith("@@")) colorClass = "text-sky-400";
+  return <div className={colorClass}>{line || " "}</div>;
+}
+
+interface DiffPopoverProps {
+  x: number;
+  y: number;
+  commitSha: string;
+  diffText: string | null;
+  loading: boolean;
+  error: string | null;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}
+
+function DiffPopover({ x, y, commitSha, diffText, loading, error, onMouseEnter, onMouseLeave }: DiffPopoverProps) {
+  return (
+    <Panel
+      elevated
+      className="fixed z-50 flex flex-col overflow-hidden"
+      style={{ left: x, top: y, width: POPOVER_WIDTH, maxHeight: POPOVER_MAX_HEIGHT }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <div className="px-3 py-1.5 border-b border-slate-800 text-[10px] font-mono text-slate-500 shrink-0">
+        Hand-off commit {commitSha.slice(0, 7)}
+      </div>
+      <div className="overflow-auto px-3 py-2 text-[10px] font-mono leading-snug">
+        {loading && <div className="text-slate-500">Loading diff…</div>}
+        {error && <div className="text-red-400">Failed to load diff: {error}</div>}
+        {!loading && !error && diffText !== null && (
+          diffText.trim() === "" ? (
+            <div className="text-slate-500">No changes</div>
+          ) : (
+            diffText.split("\n").map((line, i) => <DiffLine key={i} line={line} />)
+          )
+        )}
+      </div>
+    </Panel>
+  );
+}
 
 interface SVGEdgeLayerProps {
   // When provided, edges with neither endpoint node inside these bounds are skipped.
@@ -45,10 +109,84 @@ function EdgeCable({ edgeId, d, strokeColor, markerUrl, dashClass, diffStat, mid
   const shadowRef = useRef<SVGPathElement>(null);
   const cableRef = useRef<SVGPathElement>(null);
 
+  const fetchTimerRef = useRef<number | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
+  const isMountedRef = useRef(true);
+
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [diffText, setDiffText] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   useEffect(() => {
     edgeDragRegistry.register(edgeId, { hit: hitRef.current, shadow: shadowRef.current, cable: cableRef.current });
     return () => edgeDragRegistry.unregister(edgeId);
   }, [edgeId]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (fetchTimerRef.current !== null) window.clearTimeout(fetchTimerRef.current);
+      if (hideTimerRef.current !== null) window.clearTimeout(hideTimerRef.current);
+    };
+  }, []);
+
+  const clearHideTimer = () => {
+    if (hideTimerRef.current !== null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  };
+
+  const scheduleHide = () => {
+    clearHideTimer();
+    hideTimerRef.current = window.setTimeout(() => setHoverPos(null), HIDE_DELAY_MS);
+  };
+
+  const handleBadgeEnter = (e: MouseEvent<HTMLDivElement>) => {
+    if (!diffStat) return;
+    clearHideTimer();
+    setHoverPos(clampPopoverPosition(e.clientX + 14, e.clientY + 14));
+
+    const sha = diffStat.commitSha;
+    const cached = diffCache.get(sha);
+    if (cached !== undefined) {
+      setDiffText(cached);
+      setLoading(false);
+      setFetchError(null);
+      return;
+    }
+
+    setDiffText(null);
+    setFetchError(null);
+    setLoading(true);
+    if (fetchTimerRef.current !== null) window.clearTimeout(fetchTimerRef.current);
+    fetchTimerRef.current = window.setTimeout(() => {
+      invoke<string>("get_diff_for_commit", { sha })
+        .then((text) => {
+          diffCache.set(sha, text);
+          if (isMountedRef.current) {
+            setDiffText(text);
+            setLoading(false);
+          }
+        })
+        .catch((err) => {
+          if (isMountedRef.current) {
+            setFetchError(String(err));
+            setLoading(false);
+          }
+        });
+    }, HOVER_FETCH_DELAY_MS);
+  };
+
+  const handleBadgeLeave = () => {
+    if (fetchTimerRef.current !== null) {
+      window.clearTimeout(fetchTimerRef.current);
+      fetchTimerRef.current = null;
+    }
+    scheduleHide();
+  };
 
   return (
     <g className="group">
@@ -75,8 +213,9 @@ function EdgeCable({ edgeId, d, strokeColor, markerUrl, dashClass, diffStat, mid
       {diffStat && mid && (
         <foreignObject x={mid.x - 45} y={mid.y - 11} width={90} height={22} className="pointer-events-none overflow-visible">
           <div
-            title={`Hand-off commit ${diffStat.commitSha.slice(0, 7)}`}
-            className="flex items-center justify-center gap-1 w-fit mx-auto bg-slate-950/95 border border-slate-700 rounded-full px-2 py-0.5 text-[9px] font-mono shadow-lg whitespace-nowrap"
+            onMouseEnter={handleBadgeEnter}
+            onMouseLeave={handleBadgeLeave}
+            className="pointer-events-auto flex items-center justify-center gap-1 w-fit mx-auto bg-slate-950/95 border border-slate-700 rounded-full px-2 py-0.5 text-[9px] font-mono shadow-lg whitespace-nowrap cursor-default"
           >
             <span className="text-emerald-400">+{diffStat.insertions}</span>
             <span className="text-slate-600">/</span>
@@ -84,6 +223,22 @@ function EdgeCable({ edgeId, d, strokeColor, markerUrl, dashClass, diffStat, mid
           </div>
         </foreignObject>
       )}
+      {/* Diff preview popover: portaled to <body> so it renders at a fixed screen size,
+          independent of the canvas's pan/zoom transform. */}
+      {hoverPos && diffStat &&
+        createPortal(
+          <DiffPopover
+            x={hoverPos.x}
+            y={hoverPos.y}
+            commitSha={diffStat.commitSha}
+            diffText={diffText}
+            loading={loading}
+            error={fetchError}
+            onMouseEnter={clearHideTimer}
+            onMouseLeave={scheduleHide}
+          />,
+          document.body
+        )}
     </g>
   );
 }
