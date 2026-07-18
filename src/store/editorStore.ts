@@ -28,6 +28,8 @@ interface EditorStoreState {
 
   openFile: (projectId: string, path: string) => Promise<void>;
   closeFile: (path: string) => void;
+  closeAll: () => void;
+  saveAllDirty: () => Promise<void>;
   setActivePath: (path: string) => void;
   updateContent: (path: string, content: string) => void;
   saveFile: (path: string) => Promise<void>;
@@ -108,6 +110,17 @@ export const useEditorStore = create<EditorStoreState>((set, get) => ({
         state.activePath === path ? order[order.length - 1] ?? null : state.activePath;
       return { tabs, order, activePath };
     });
+  },
+
+  closeAll: () => set({ tabs: {}, order: [], activePath: null }),
+
+  saveAllDirty: async () => {
+    const dirtyPaths = Object.values(get().tabs)
+      .filter((tab) => tab.dirty)
+      .map((tab) => tab.path);
+    for (const path of dirtyPaths) {
+      await get().saveFile(path);
+    }
   },
 
   setActivePath: (path) => set({ activePath: path }),

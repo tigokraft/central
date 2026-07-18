@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { GitCompare, X } from "lucide-react";
+import { GitCompare, PanelRightClose, X } from "lucide-react";
 import { cn } from "../../lib/cn";
 import { useEditorStore } from "../../store/editorStore";
 import { useGitStatusStore, statusFor, GIT_STATUS_DOT_CLASS } from "../../store/gitStatusStore";
@@ -20,17 +20,30 @@ export default function EditorTabBar() {
   const activePath = useEditorStore((s) => s.activePath);
   const setActivePath = useEditorStore((s) => s.setActivePath);
   const closeFile = useEditorStore((s) => s.closeFile);
+  const closeAll = useEditorStore((s) => s.closeAll);
   const saveFile = useEditorStore((s) => s.saveFile);
+  const saveAllDirty = useEditorStore((s) => s.saveAllDirty);
   const toggleDiff = useEditorStore((s) => s.toggleDiff);
   const byPath = useGitStatusStore((s) => s.byPath);
 
   const [closeTarget, setCloseTarget] = useState<string | null>(null);
+  const [closeAllRequested, setCloseAllRequested] = useState(false);
 
   const requestClose = (path: string) => {
     if (tabs[path]?.dirty) {
       setCloseTarget(path);
     } else {
       closeFile(path);
+    }
+  };
+
+  const dirtyCount = order.filter((path) => tabs[path]?.dirty).length;
+
+  const requestCloseAll = () => {
+    if (dirtyCount > 0) {
+      setCloseAllRequested(true);
+    } else {
+      closeAll();
     }
   };
 
@@ -78,8 +91,8 @@ export default function EditorTabBar() {
         })}
       </div>
 
-      {activePath && activeTab && !activeTab.loading && !activeTab.error && (
-        <div className="flex items-center gap-0.5 px-1 shrink-0">
+      <div className="flex items-center gap-0.5 px-1 shrink-0 border-l border-slate-800">
+        {activePath && activeTab && !activeTab.loading && !activeTab.error && (
           <IconButton
             title="Toggle diff vs HEAD"
             variant={activeTab.diffMode ? "active" : "default"}
@@ -87,8 +100,11 @@ export default function EditorTabBar() {
           >
             <GitCompare size={12} />
           </IconButton>
-        </div>
-      )}
+        )}
+        <IconButton title="Close editor panel" onClick={requestCloseAll}>
+          <PanelRightClose size={12} />
+        </IconButton>
+      </div>
 
       {closeTarget && (
         <Modal onClose={() => setCloseTarget(null)} width={360}>
@@ -121,6 +137,42 @@ export default function EditorTabBar() {
               }}
             >
               Save & Close
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {closeAllRequested && (
+        <Modal onClose={() => setCloseAllRequested(false)} width={360}>
+          <p className="text-xs font-semibold text-slate-200 uppercase tracking-wide">Unsaved Changes</p>
+          <p className="text-xs text-slate-400 mt-2">
+            {dirtyCount} file{dirtyCount === 1 ? "" : "s"} have unsaved changes. Save before closing the
+            editor?
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setCloseAllRequested(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                closeAll();
+                setCloseAllRequested(false);
+              }}
+              className="text-red-400"
+            >
+              Discard All
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                void saveAllDirty().then(() => closeAll());
+                setCloseAllRequested(false);
+              }}
+            >
+              Save All & Close
             </Button>
           </div>
         </Modal>
