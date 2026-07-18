@@ -234,6 +234,13 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   // PTY session lifecycle: spawned once per node and kept alive across displayMode changes,
   // so toggling live/quiet/minimized never interrupts the running shell or its process tree.
   useEffect(() => {
+    // StrictMode mounts this effect, tears it down, then mounts it again — and cleanup runs
+    // synchronously, before the `await listen(...)` below has a chance to resolve. Without
+    // this flag, the first run's cleanup would find `unlistenOutput` still null (nothing to
+    // unsubscribe yet) and the listener it's about to register would leak forever, doubling
+    // every event once the second run's listener is also live. Checking `cancelled` right
+    // after each await lets a listener that resolves too late unsubscribe itself instead.
+    let cancelled = false;
     let unlistenOutput: (() => void) | null = null;
     let unlistenExit: (() => void) | null = null;
 
@@ -243,7 +250,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         // terminals still need live output to keep their status strip's tail lines current,
         // and a live xterm mounting later needs this same subscription redirected into it
         // (see outputSinkRef / the xterm-mount effect).
-        unlistenOutput = await listen<{ node_id: string; data: string }>(
+        const offOutput = await listen<{ node_id: string; data: string }>(
           "pty-output",
           (event) => {
             if (event.payload.node_id !== id) return;
@@ -265,9 +272,14 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
             outputSinkRef.current(chunk);
           }
         );
+        if (cancelled) {
+          offOutput();
+          return;
+        }
+        unlistenOutput = offOutput;
 
         // Subscribe to PTY exit notification
-        unlistenExit = await listen<{ node_id: string }>(
+        const offExit = await listen<{ node_id: string }>(
           "pty-exit",
           (event) => {
             if (event.payload.node_id === id) {
@@ -277,15 +289,22 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
             }
           }
         );
+        if (cancelled) {
+          offExit();
+          return;
+        }
+        unlistenExit = offExit;
 
         // Spawn interactive shell. Uses fixed defaults rather than reading a live xterm's
         // size, since a quiet-by-default (e.g. pipeline) terminal may never have one; a live
         // xterm mounting later corrects the size via resize_pty once it fits itself.
         await invoke("spawn_pty", { nodeId: id, cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS });
+        if (cancelled) return;
         ptyReadyRef.current = true;
         setPtyStatus("idle");
         updateNodeData(id, { status: "idle" });
       } catch (err) {
+        if (cancelled) return;
         console.error("Failed to initialize PTY:", err);
         setPtyStatus("error");
         updateNodeData(id, { status: "error" });
@@ -295,6 +314,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     setupPty();
 
     return () => {
+      cancelled = true;
       ptyReadyRef.current = false;
       if (unlistenOutput) unlistenOutput();
       if (unlistenExit) unlistenExit();
