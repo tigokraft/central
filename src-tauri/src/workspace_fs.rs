@@ -248,6 +248,17 @@ pub fn delete_path(
     delete_path_at(&canonical_workspace_root(&app, &project_id)?, &path, force)
 }
 
+#[tauri::command]
+pub fn show_in_folder(
+    project_id: String,
+    path: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    let workspace = canonical_workspace_root(&app, &project_id)?;
+    let target = resolve_within_workspace(&workspace, &path)?;
+    tauri_plugin_opener::reveal_item_in_dir(target).map_err(|e| e.to_string())
+}
+
 // --- Workspace file watcher ---
 
 struct WatcherHandle {

@@ -98,6 +98,7 @@ pub fn run() {
             workspace_fs::create_dir,
             workspace_fs::rename_path,
             workspace_fs::delete_path,
+            workspace_fs::show_in_folder,
             workspace_fs::start_workspace_watcher,
             workspace_fs::stop_workspace_watcher,
         ])
