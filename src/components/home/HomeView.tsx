@@ -4,6 +4,7 @@ import { Folder, Plus, X, Check } from "lucide-react";
 import Panel from "../ui/Panel";
 import Button from "../ui/Button";
 import Modal from "../ui/Modal";
+import NodeLayoutThumbnail from "../canvas/NodeLayoutThumbnail";
 import { useAppViewStore } from "../../store/appViewStore";
 import { useCanvasStore, NEW_PROJECT_TEMPLATE, type CanvasNode, type CanvasEdge, type Viewport } from "../../store/canvasStore";
 import { PROJECT_TEMPLATES, type ProjectTemplate } from "../../lib/projectTemplates";
@@ -24,6 +25,7 @@ interface ProjectGraph {
 
 export default function HomeView() {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [thumbnailNodes, setThumbnailNodes] = useState<Record<string, CanvasNode[]>>({});
   const [loading, setLoading] = useState(true);
   const [showNewProject, setShowNewProject] = useState(false);
   const openProject = useAppViewStore((state) => state.openProject);
@@ -35,12 +37,29 @@ export default function HomeView() {
   const refreshProjects = async () => {
     try {
       const list = await invoke<ProjectMeta[]>("list_projects");
-      setProjects([...list].sort((a, b) => b.lastModifiedAt - a.lastModifiedAt));
+      const sorted = [...list].sort((a, b) => b.lastModifiedAt - a.lastModifiedAt);
+      setProjects(sorted);
+      void loadThumbnails(sorted);
     } catch (err) {
       console.error("Failed to list projects:", err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadThumbnails = async (list: ProjectMeta[]) => {
+    const entries = await Promise.all(
+      list.map(async (project): Promise<[string, CanvasNode[]]> => {
+        try {
+          const graph = await invoke<ProjectGraph | null>("load_project_graph", { projectId: project.id });
+          return [project.id, graph?.nodes ?? []];
+        } catch (err) {
+          console.error(`Failed to load graph for thumbnail (${project.id}):`, err);
+          return [project.id, []];
+        }
+      })
+    );
+    setThumbnailNodes(Object.fromEntries(entries));
   };
 
   const handleOpenProject = async (projectId: string) => {
@@ -97,6 +116,10 @@ export default function HomeView() {
                 className="p-4 text-left cursor-pointer hover:border-emerald-500/40 transition-colors"
                 onClick={() => void handleOpenProject(project.id)}
               >
+                <NodeLayoutThumbnail
+                  nodes={thumbnailNodes[project.id] ?? []}
+                  className="w-full h-20 mb-3 rounded bg-slate-950/60 border border-slate-800/60"
+                />
                 <div className="flex items-center gap-2 mb-2">
                   <Folder size={14} className="text-emerald-500 shrink-0" />
                   <span className="text-sm font-medium text-slate-200 truncate">{project.name}</span>
