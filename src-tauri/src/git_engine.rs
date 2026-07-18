@@ -42,9 +42,38 @@ struct WorktreeHandle {
     base_commit: String,
 }
 
+// Worktrees are keyed by (project_id, node_id) rather than just node_id, so two projects
+// running pipelines concurrently (or reusing the same node id across separate canvases) never
+// share or clobber each other's sandbox state.
+type WorktreeKey = (String, String);
+
 #[derive(Default)]
 pub struct GitEngineState {
-    worktrees: Mutex<HashMap<String, WorktreeHandle>>,
+    worktrees: Mutex<HashMap<WorktreeKey, WorktreeHandle>>,
+}
+
+const CENTRAL_GITIGNORE_ENTRY: &str = ".central/";
+
+/// Ensures the project workspace's `.gitignore` excludes Central's own `.central/` scratch
+/// directory (agent worktrees, memory, vault), creating the file if it doesn't exist yet.
+/// Idempotent: never appends a duplicate entry on repeated runs.
+fn ensure_central_gitignored(workspace: &Path) {
+    let path = workspace.join(".gitignore");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let already_present = existing
+        .lines()
+        .any(|line| matches!(line.trim(), ".central/" | ".central"));
+    if already_present {
+        return;
+    }
+
+    let mut updated = existing;
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(CENTRAL_GITIGNORE_ENTRY);
+    updated.push('\n');
+    let _ = std::fs::write(&path, updated);
 }
 
 // Monotonic counter guarantees unique worktree/branch names even when two nodes are
@@ -90,27 +119,36 @@ fn prune_worktree(repo: &Repository, handle: &WorktreeHandle) {
 }
 
 impl GitEngineState {
-    /// Discards any ephemeral worktree left over from a previous run for these node ids,
-    /// so every new pipeline execution starts each agent node from a clean sandbox.
-    pub fn prepare_run(&self, repo_root: &Path, node_ids: &[String]) {
+    /// Discards any ephemeral worktree left over from a previous run for these node ids within
+    /// a project, so every new pipeline execution starts each agent node from a clean sandbox.
+    pub fn prepare_run(&self, project_id: &str, repo_root: &Path, node_ids: &[String]) {
         let repo = match Repository::open(repo_root) {
             Ok(r) => r,
             Err(_) => return,
         };
         let mut worktrees = self.worktrees.lock().unwrap();
         for node_id in node_ids {
-            if let Some(handle) = worktrees.remove(node_id) {
+            let key = (project_id.to_string(), node_id.clone());
+            if let Some(handle) = worktrees.remove(&key) {
                 prune_worktree(&repo, &handle);
             }
         }
     }
 
-    /// Lazily creates (or reuses within the current run) an isolated git worktree for a
-    /// node so its shell commands can never dirty the primary working branch.
-    pub fn ensure_worktree(&self, repo_root: &Path, node_id: &str) -> Result<PathBuf, String> {
+    /// Lazily creates (or reuses within the current run) an isolated git worktree for a node
+    /// within a project's workspace, so its shell commands can never dirty the primary working
+    /// branch. Lives at `<workspace>/.central/worktrees/<node-id>`, with `.central/` gitignored
+    /// so the agent's own scratch state never shows up as pending changes in the main worktree.
+    pub fn ensure_worktree(
+        &self,
+        project_id: &str,
+        repo_root: &Path,
+        node_id: &str,
+    ) -> Result<PathBuf, String> {
+        let key = (project_id.to_string(), node_id.to_string());
         {
             let worktrees = self.worktrees.lock().unwrap();
-            if let Some(handle) = worktrees.get(node_id) {
+            if let Some(handle) = worktrees.get(&key) {
                 if handle.path.exists() {
                     return Ok(handle.path.clone());
                 }
@@ -124,18 +162,29 @@ impl GitEngineState {
             .map_err(|e| e.to_string())?;
         let base_commit = head_commit.id().to_string();
 
+        ensure_central_gitignored(repo_root);
+
         let seq = WORKTREE_SEQ.fetch_add(1, Ordering::SeqCst);
         let worktree_name = format!("agent-{}-{}-{}", sanitize(node_id), timestamp_millis(), seq);
-        let wt_root = std::env::temp_dir().join("central-worktrees");
-        std::fs::create_dir_all(&wt_root).map_err(|e| e.to_string())?;
-        let wt_path = wt_root.join(&worktree_name);
+        let wt_path = repo_root
+            .join(".central")
+            .join("worktrees")
+            .join(sanitize(node_id));
+        if let Some(parent) = wt_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if wt_path.exists() {
+            // Leftover from a crashed run that `prepare_run` never got a chance to prune;
+            // `repo.worktree` refuses to create into an already-existing directory.
+            let _ = std::fs::remove_dir_all(&wt_path);
+        }
 
         repo.worktree(&worktree_name, &wt_path, None)
             .map_err(|e| e.to_string())?;
 
         let mut worktrees = self.worktrees.lock().unwrap();
         worktrees.insert(
-            node_id.to_string(),
+            key,
             WorktreeHandle {
                 worktree_name,
                 path: wt_path.clone(),
@@ -150,12 +199,13 @@ impl GitEngineState {
     /// node never touched a worktree or produced no file changes to hand off.
     pub fn commit_handoff(
         &self,
+        project_id: &str,
         node_id: &str,
         target_node_id: &str,
     ) -> Result<Option<HandoffResult>, String> {
         let (worktree_name, path, base_commit) = {
             let worktrees = self.worktrees.lock().unwrap();
-            match worktrees.get(node_id) {
+            match worktrees.get(&(project_id.to_string(), node_id.to_string())) {
                 Some(h) => (
                     h.worktree_name.clone(),
                     h.path.clone(),
@@ -214,12 +264,14 @@ impl GitEngineState {
         }))
     }
 
-    /// Snapshot of every ephemeral worktree currently tracked, for the Deployments HUD.
-    pub fn list_worktrees(&self) -> Vec<WorktreeInfo> {
+    /// Snapshot of every ephemeral worktree currently tracked for a project, for the
+    /// Deployments HUD. Scoped so switching projects never shows another project's sandboxes.
+    pub fn list_worktrees(&self, project_id: &str) -> Vec<WorktreeInfo> {
         let worktrees = self.worktrees.lock().unwrap();
         worktrees
             .iter()
-            .map(|(node_id, handle)| {
+            .filter(|((pid, _), _)| pid == project_id)
+            .map(|((_, node_id), handle)| {
                 let head_commit =
                     head_commit_sha(&handle.path).unwrap_or_else(|| handle.base_commit.clone());
                 WorktreeInfo {
@@ -237,11 +289,11 @@ impl GitEngineState {
     /// any agent edits (including new untracked files). This only ever touches the node's own
     /// throwaway worktree, never the primary working branch, so it is safe to expose as a
     /// one-click UI action.
-    pub fn rollback_worktree(&self, node_id: &str) -> Result<(), String> {
+    pub fn rollback_worktree(&self, project_id: &str, node_id: &str) -> Result<(), String> {
         let (path, base_commit) = {
             let worktrees = self.worktrees.lock().unwrap();
             let handle = worktrees
-                .get(node_id)
+                .get(&(project_id.to_string(), node_id.to_string()))
                 .ok_or_else(|| format!("No active worktree for node '{}'", node_id))?;
             (handle.path.clone(), handle.base_commit.clone())
         };
@@ -278,13 +330,20 @@ impl GitEngineState {
 }
 
 #[tauri::command]
-pub fn list_active_worktrees(state: State<'_, GitEngineState>) -> Vec<WorktreeInfo> {
-    state.list_worktrees()
+pub fn list_active_worktrees(
+    project_id: String,
+    state: State<'_, GitEngineState>,
+) -> Vec<WorktreeInfo> {
+    state.list_worktrees(&project_id)
 }
 
 #[tauri::command]
-pub fn rollback_worktree(node_id: String, state: State<'_, GitEngineState>) -> Result<(), String> {
-    state.rollback_worktree(&node_id)
+pub fn rollback_worktree(
+    project_id: String,
+    node_id: String,
+    state: State<'_, GitEngineState>,
+) -> Result<(), String> {
+    state.rollback_worktree(&project_id, &node_id)
 }
 
 /// Resolves the project root the graph runner and git engine operate against: the
@@ -317,8 +376,9 @@ fn default_repo_root() -> PathBuf {
 }
 
 #[tauri::command]
-pub fn get_repo_head(app: AppHandle) -> Result<RepoHeadInfo, String> {
-    let repo = Repository::open(resolve_repo_root(&app)).map_err(|e| e.to_string())?;
+pub fn get_repo_head(project_id: String, app: AppHandle) -> Result<RepoHeadInfo, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    let repo = Repository::open(workspace).map_err(|e| e.to_string())?;
     let head = repo.head().map_err(|e| e.to_string())?;
     let branch = head.shorthand().unwrap_or("HEAD").to_string();
     let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
@@ -331,8 +391,9 @@ pub fn get_repo_head(app: AppHandle) -> Result<RepoHeadInfo, String> {
 /// Renders the working tree's pending changes (staged + unstaged, against HEAD) as a unified
 /// patch, for the Terminal Node's "Inject Git Diff" context action.
 #[tauri::command]
-pub fn get_git_diff(app: AppHandle) -> Result<String, String> {
-    let repo = Repository::open(resolve_repo_root(&app)).map_err(|e| e.to_string())?;
+pub fn get_git_diff(project_id: String, app: AppHandle) -> Result<String, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    let repo = Repository::open(workspace).map_err(|e| e.to_string())?;
     let head_tree = repo
         .head()
         .and_then(|h| h.peel_to_tree())
@@ -384,8 +445,13 @@ fn diff_for_commit(repo_root: &Path, sha: &str) -> Result<String, String> {
 /// Renders a single commit's changes (against its first parent) as a unified patch, for the
 /// cable diff-preview popover, fetched on demand when the user hovers the diff badge.
 #[tauri::command]
-pub fn get_diff_for_commit(app: AppHandle, sha: String) -> Result<String, String> {
-    diff_for_commit(&resolve_repo_root(&app), &sha)
+pub fn get_diff_for_commit(
+    project_id: String,
+    sha: String,
+    app: AppHandle,
+) -> Result<String, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    diff_for_commit(&workspace, &sha)
 }
 
 #[cfg(test)]
@@ -438,14 +504,71 @@ mod tests {
         let repo_root = init_test_repo();
         let state = GitEngineState::default();
 
-        let wt_path = state.ensure_worktree(&repo_root, "node-1").unwrap();
+        let wt_path = state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
 
         assert!(wt_path.exists());
         assert_ne!(wt_path, repo_root);
         assert!(Repository::open(&wt_path).is_ok());
+        assert_eq!(
+            wt_path,
+            repo_root.join(".central").join("worktrees").join("node-1")
+        );
 
         let _ = std::fs::remove_dir_all(&repo_root);
-        let _ = std::fs::remove_dir_all(&wt_path);
+    }
+
+    #[test]
+    fn ensure_worktree_gitignores_the_central_scratch_dir() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+
+        state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
+
+        let gitignore = std::fs::read_to_string(repo_root.join(".gitignore")).unwrap();
+        assert_eq!(
+            gitignore
+                .lines()
+                .filter(|l| l.trim() == ".central/")
+                .count(),
+            1
+        );
+
+        // Running it again (e.g. a second node in the same project) must not duplicate
+        // the entry.
+        state
+            .ensure_worktree("proj-a", &repo_root, "node-2")
+            .unwrap();
+        let gitignore_again = std::fs::read_to_string(repo_root.join(".gitignore")).unwrap();
+        assert_eq!(
+            gitignore_again
+                .lines()
+                .filter(|l| l.trim() == ".central/")
+                .count(),
+            1
+        );
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn ensure_worktree_preserves_existing_gitignore_content() {
+        let repo_root = init_test_repo();
+        std::fs::write(repo_root.join(".gitignore"), "node_modules/\n").unwrap();
+        let state = GitEngineState::default();
+
+        state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
+
+        let gitignore = std::fs::read_to_string(repo_root.join(".gitignore")).unwrap();
+        assert!(gitignore.contains("node_modules/"));
+        assert!(gitignore.contains(".central/"));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
     }
 
     #[test]
@@ -453,13 +576,36 @@ mod tests {
         let repo_root = init_test_repo();
         let state = GitEngineState::default();
 
-        let first = state.ensure_worktree(&repo_root, "node-1").unwrap();
-        let second = state.ensure_worktree(&repo_root, "node-1").unwrap();
+        let first = state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
+        let second = state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
 
         assert_eq!(first, second);
 
         let _ = std::fs::remove_dir_all(&repo_root);
-        let _ = std::fs::remove_dir_all(&first);
+    }
+
+    #[test]
+    fn ensure_worktree_isolates_state_across_projects_with_separate_roots() {
+        let repo_a = init_test_repo();
+        let repo_b = init_test_repo();
+        let state = GitEngineState::default();
+
+        // Same node id, two different projects with two different repo roots.
+        let path_a = state.ensure_worktree("proj-a", &repo_a, "node-1").unwrap();
+        let path_b = state.ensure_worktree("proj-b", &repo_b, "node-1").unwrap();
+
+        assert_ne!(path_a, path_b);
+        assert!(path_a.starts_with(&repo_a));
+        assert!(path_b.starts_with(&repo_b));
+        assert!(Repository::open(&path_a).is_ok());
+        assert!(Repository::open(&path_b).is_ok());
+
+        let _ = std::fs::remove_dir_all(&repo_a);
+        let _ = std::fs::remove_dir_all(&repo_b);
     }
 
     #[test]
@@ -467,10 +613,14 @@ mod tests {
         let repo_root = init_test_repo();
         let state = GitEngineState::default();
 
-        let wt_path = state.ensure_worktree(&repo_root, "coder-1").unwrap();
+        let wt_path = state
+            .ensure_worktree("proj-a", &repo_root, "coder-1")
+            .unwrap();
         std::fs::write(wt_path.join("agent-output.txt"), "agent edit\n").unwrap();
 
-        let result = state.commit_handoff("coder-1", "reviewer-1").unwrap();
+        let result = state
+            .commit_handoff("proj-a", "coder-1", "reviewer-1")
+            .unwrap();
         let result = result.expect("expected a handoff result since a file changed");
 
         assert_eq!(result.node_id, "coder-1");
@@ -480,7 +630,6 @@ mod tests {
         assert!(!result.commit_sha.is_empty());
 
         let _ = std::fs::remove_dir_all(&repo_root);
-        let _ = std::fs::remove_dir_all(&wt_path);
     }
 
     #[test]
@@ -488,20 +637,52 @@ mod tests {
         let repo_root = init_test_repo();
         let state = GitEngineState::default();
 
-        let wt_path = state.ensure_worktree(&repo_root, "coder-1").unwrap();
-        let result = state.commit_handoff("coder-1", "reviewer-1").unwrap();
+        state
+            .ensure_worktree("proj-a", &repo_root, "coder-1")
+            .unwrap();
+        let result = state
+            .commit_handoff("proj-a", "coder-1", "reviewer-1")
+            .unwrap();
 
         assert!(result.is_none());
 
         let _ = std::fs::remove_dir_all(&repo_root);
-        let _ = std::fs::remove_dir_all(&wt_path);
     }
 
     #[test]
     fn commit_handoff_returns_none_for_unknown_node() {
         let state = GitEngineState::default();
-        let result = state.commit_handoff("ghost-node", "reviewer-1").unwrap();
+        let result = state
+            .commit_handoff("proj-a", "ghost-node", "reviewer-1")
+            .unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn commit_handoff_scopes_to_project_even_with_shared_node_id() {
+        let repo_a = init_test_repo();
+        let repo_b = init_test_repo();
+        let state = GitEngineState::default();
+
+        let wt_a = state.ensure_worktree("proj-a", &repo_a, "coder-1").unwrap();
+        state.ensure_worktree("proj-b", &repo_b, "coder-1").unwrap();
+        std::fs::write(wt_a.join("agent-output.txt"), "agent edit\n").unwrap();
+
+        // proj-b never touched its worktree, so its handoff for the same node id is a no-op...
+        let result_b = state
+            .commit_handoff("proj-b", "coder-1", "reviewer-1")
+            .unwrap();
+        assert!(result_b.is_none());
+
+        // ...while proj-a's own edit still hands off correctly.
+        let result_a = state
+            .commit_handoff("proj-a", "coder-1", "reviewer-1")
+            .unwrap()
+            .expect("expected a handoff result since proj-a's worktree changed");
+        assert_eq!(result_a.files_changed, 1);
+
+        let _ = std::fs::remove_dir_all(&repo_a);
+        let _ = std::fs::remove_dir_all(&repo_b);
     }
 
     #[test]
@@ -509,10 +690,12 @@ mod tests {
         let repo_root = init_test_repo();
         let state = GitEngineState::default();
 
-        let wt_path = state.ensure_worktree(&repo_root, "coder-1").unwrap();
+        let wt_path = state
+            .ensure_worktree("proj-a", &repo_root, "coder-1")
+            .unwrap();
         std::fs::write(wt_path.join("agent-output.txt"), "agent edit\n").unwrap();
         let result = state
-            .commit_handoff("coder-1", "reviewer-1")
+            .commit_handoff("proj-a", "coder-1", "reviewer-1")
             .unwrap()
             .expect("expected a handoff result since a file changed");
 
@@ -524,7 +707,6 @@ mod tests {
         assert!(patch.contains("+agent edit"));
 
         let _ = std::fs::remove_dir_all(&repo_root);
-        let _ = std::fs::remove_dir_all(&wt_path);
     }
 
     #[test]
@@ -540,14 +722,35 @@ mod tests {
         let repo_root = init_test_repo();
         let state = GitEngineState::default();
 
-        let first = state.ensure_worktree(&repo_root, "node-1").unwrap();
+        let first = state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
         assert!(first.exists());
 
-        state.prepare_run(&repo_root, &["node-1".to_string()]);
+        state.prepare_run("proj-a", &repo_root, &["node-1".to_string()]);
         assert!(!first.exists());
-        assert!(state.list_worktrees().is_empty());
+        assert!(state.list_worktrees("proj-a").is_empty());
 
         let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn prepare_run_does_not_prune_another_projects_worktree() {
+        let repo_a = init_test_repo();
+        let repo_b = init_test_repo();
+        let state = GitEngineState::default();
+
+        let path_a = state.ensure_worktree("proj-a", &repo_a, "node-1").unwrap();
+        let path_b = state.ensure_worktree("proj-b", &repo_b, "node-1").unwrap();
+
+        state.prepare_run("proj-a", &repo_a, &["node-1".to_string()]);
+
+        assert!(!path_a.exists());
+        assert!(path_b.exists());
+        assert_eq!(state.list_worktrees("proj-b").len(), 1);
+
+        let _ = std::fs::remove_dir_all(&repo_a);
+        let _ = std::fs::remove_dir_all(&repo_b);
     }
 
     #[test]
@@ -555,16 +758,36 @@ mod tests {
         let repo_root = init_test_repo();
         let state = GitEngineState::default();
 
-        let wt_path = state.ensure_worktree(&repo_root, "node-1").unwrap();
+        let wt_path = state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
         std::fs::write(wt_path.join("scratch.txt"), "temporary\n").unwrap();
         assert!(wt_path.join("scratch.txt").exists());
 
-        state.rollback_worktree("node-1").unwrap();
+        state.rollback_worktree("proj-a", "node-1").unwrap();
 
         assert!(!wt_path.join("scratch.txt").exists());
 
         let _ = std::fs::remove_dir_all(&repo_root);
-        let _ = std::fs::remove_dir_all(&wt_path);
+    }
+
+    #[test]
+    fn rollback_worktree_rejects_wrong_project_id_for_shared_node_id() {
+        let repo_a = init_test_repo();
+        let repo_b = init_test_repo();
+        let state = GitEngineState::default();
+
+        state.ensure_worktree("proj-a", &repo_a, "node-1").unwrap();
+        state.ensure_worktree("proj-b", &repo_b, "node-1").unwrap();
+
+        // proj-a's own worktree rolls back fine...
+        assert!(state.rollback_worktree("proj-a", "node-1").is_ok());
+        // ...but a project id that never created this node's worktree does not reach into
+        // another project's sandbox.
+        assert!(state.rollback_worktree("proj-c", "node-1").is_err());
+
+        let _ = std::fs::remove_dir_all(&repo_a);
+        let _ = std::fs::remove_dir_all(&repo_b);
     }
 
     #[test]
@@ -572,15 +795,35 @@ mod tests {
         let repo_root = init_test_repo();
         let state = GitEngineState::default();
 
-        state.ensure_worktree(&repo_root, "node-1").unwrap();
-        let listed = state.list_worktrees();
+        state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
+        let listed = state.list_worktrees("proj-a");
 
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].node_id, "node-1");
 
-        for wt in &listed {
-            let _ = std::fs::remove_dir_all(&wt.path);
-        }
         let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn list_worktrees_scopes_to_project() {
+        let repo_a = init_test_repo();
+        let repo_b = init_test_repo();
+        let state = GitEngineState::default();
+
+        state.ensure_worktree("proj-a", &repo_a, "node-1").unwrap();
+        state.ensure_worktree("proj-b", &repo_b, "node-2").unwrap();
+
+        let listed_a = state.list_worktrees("proj-a");
+        assert_eq!(listed_a.len(), 1);
+        assert_eq!(listed_a[0].node_id, "node-1");
+
+        let listed_b = state.list_worktrees("proj-b");
+        assert_eq!(listed_b.len(), 1);
+        assert_eq!(listed_b[0].node_id, "node-2");
+
+        let _ = std::fs::remove_dir_all(&repo_a);
+        let _ = std::fs::remove_dir_all(&repo_b);
     }
 }
