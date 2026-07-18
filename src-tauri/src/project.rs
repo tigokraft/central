@@ -343,11 +343,8 @@ fn create_pipeline_at(root: &Path, project_id: &str, name: &str) -> Result<Pipel
     };
 
     let raw = serde_json::to_string(&default_graph_json()).map_err(|e| e.to_string())?;
-    std::fs::write(
-        pipeline_graph_path_at(root, project_id, &meta.id),
-        raw,
-    )
-    .map_err(|e| e.to_string())?;
+    std::fs::write(pipeline_graph_path_at(root, project_id, &meta.id), raw)
+        .map_err(|e| e.to_string())?;
 
     pipelines.push(meta.clone());
     write_pipelines_manifest_at(root, project_id, &pipelines)?;
@@ -766,7 +763,9 @@ mod tests {
         let created = create_pipeline_at(&root, &meta.id, "Second").unwrap();
         let pipelines = read_pipelines_manifest_at(&root, &meta.id).unwrap();
         assert_eq!(pipelines.len(), 2);
-        assert!(pipelines.iter().any(|p| p.id == created.id && p.name == "Second"));
+        assert!(pipelines
+            .iter()
+            .any(|p| p.id == created.id && p.name == "Second"));
 
         let loaded = load_pipeline_graph_at(&root, &meta.id, &created.id).unwrap();
         assert_eq!(loaded, Some(default_graph_json()));
