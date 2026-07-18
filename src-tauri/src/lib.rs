@@ -36,6 +36,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(pty_manager::PtyManager::default())
         .manage(graph_runner::GraphRunnerState::default())
         .manage(git_engine::GitEngineState::default())
@@ -77,6 +78,10 @@ pub fn run() {
             project::create_project,
             project::save_project_graph,
             project::load_project_graph,
+            project::ensure_project_workspace,
+            project::get_default_projects_location,
+            project::set_default_projects_location,
+            project::pick_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

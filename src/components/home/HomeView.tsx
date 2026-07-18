@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Folder, Plus, X, Check } from "lucide-react";
+import { Folder, Plus, X, Check, Settings, FolderOpen } from "lucide-react";
 import Panel from "../ui/Panel";
 import Button from "../ui/Button";
 import Modal from "../ui/Modal";
 import NodeLayoutThumbnail from "../canvas/NodeLayoutThumbnail";
+import WorkspaceSettingsModal from "../WorkspaceSettingsModal";
 import { useAppViewStore } from "../../store/appViewStore";
 import { useCanvasStore, NEW_PROJECT_TEMPLATE, type CanvasNode, type CanvasEdge, type Viewport } from "../../store/canvasStore";
 import { PROJECT_TEMPLATES, type ProjectTemplate } from "../../lib/projectTemplates";
+
+type WorkspaceKind = "managed" | "linked";
 
 interface ProjectMeta {
   id: string;
@@ -15,6 +18,8 @@ interface ProjectMeta {
   createdAt: number;
   lastModifiedAt: number;
   path: string;
+  workspacePath: string;
+  workspaceKind: WorkspaceKind;
 }
 
 interface ProjectGraph {
@@ -28,6 +33,7 @@ export default function HomeView() {
   const [thumbnailNodes, setThumbnailNodes] = useState<Record<string, CanvasNode[]>>({});
   const [loading, setLoading] = useState(true);
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false);
   const openProject = useAppViewStore((state) => state.openProject);
 
   useEffect(() => {
@@ -64,6 +70,8 @@ export default function HomeView() {
 
   const handleOpenProject = async (projectId: string) => {
     try {
+      const meta = await invoke<ProjectMeta>("ensure_project_workspace", { projectId });
+      await invoke("set_active_project_path", { path: meta.workspacePath });
       const graph = await invoke<ProjectGraph | null>("load_project_graph", { projectId });
       useCanvasStore.getState().hydrateFromProject(projectId, graph ?? NEW_PROJECT_TEMPLATE);
       openProject(projectId);
@@ -72,9 +80,19 @@ export default function HomeView() {
     }
   };
 
-  const handleCreateProject = async (name: string, template: ProjectTemplate) => {
+  const handleCreateProject = async (
+    name: string,
+    template: ProjectTemplate,
+    workspaceKind: WorkspaceKind,
+    linkedPath: string | null
+  ) => {
     try {
-      const meta = await invoke<ProjectMeta>("create_project", { name });
+      const meta = await invoke<ProjectMeta>("create_project", {
+        name,
+        workspaceKind,
+        linkedPath,
+      });
+      await invoke("set_active_project_path", { path: meta.workspacePath });
       const graph = template.build();
       await invoke("save_project_graph", { projectId: meta.id, graph });
       useCanvasStore.getState().hydrateFromProject(meta.id, graph);
@@ -94,10 +112,15 @@ export default function HomeView() {
             <h1 className="text-lg font-semibold text-slate-100">Projects</h1>
             <p className="text-xs text-slate-500 mt-1">Pick up where you left off, or start something new.</p>
           </div>
-          <Button variant="primary" size="md" onClick={() => setShowNewProject(true)}>
-            <Plus size={13} />
-            New Project
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="md" onClick={() => setShowWorkspaceSettings(true)} title="Workspace Settings">
+              <Settings size={13} />
+            </Button>
+            <Button variant="primary" size="md" onClick={() => setShowNewProject(true)}>
+              <Plus size={13} />
+              New Project
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -127,6 +150,12 @@ export default function HomeView() {
                 <div className="text-[10px] text-slate-500">
                   Updated {new Date(project.lastModifiedAt).toLocaleString()}
                 </div>
+                {project.workspacePath && (
+                  <div className="flex items-center gap-1 text-[10px] text-slate-600 mt-1 truncate">
+                    <FolderOpen size={10} className="shrink-0" />
+                    <span className="truncate">{project.workspacePath}</span>
+                  </div>
+                )}
               </Panel>
             ))}
           </div>
@@ -136,6 +165,7 @@ export default function HomeView() {
       {showNewProject && (
         <NewProjectModal onClose={() => setShowNewProject(false)} onCreate={handleCreateProject} />
       )}
+      {showWorkspaceSettings && <WorkspaceSettingsModal onClose={() => setShowWorkspaceSettings(false)} />}
     </div>
   );
 }
@@ -145,16 +175,33 @@ function NewProjectModal({
   onCreate,
 }: {
   onClose: () => void;
-  onCreate: (name: string, template: ProjectTemplate) => void;
+  onCreate: (
+    name: string,
+    template: ProjectTemplate,
+    workspaceKind: WorkspaceKind,
+    linkedPath: string | null
+  ) => void;
 }) {
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState(PROJECT_TEMPLATES[0].id);
+  const [workspaceKind, setWorkspaceKind] = useState<WorkspaceKind>("managed");
+  const [linkedPath, setLinkedPath] = useState<string | null>(null);
+
+  const chooseLinkedFolder = async () => {
+    try {
+      const picked = await invoke<string | null>("pick_folder");
+      if (picked) setLinkedPath(picked);
+    } catch (err) {
+      console.error("Failed to pick a folder:", err);
+    }
+  };
 
   const submit = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    if (workspaceKind === "linked" && !linkedPath) return;
     const template = PROJECT_TEMPLATES.find((t) => t.id === templateId) ?? PROJECT_TEMPLATES[0];
-    onCreate(trimmed, template);
+    onCreate(trimmed, template, workspaceKind, linkedPath);
   };
 
   return (
@@ -204,11 +251,57 @@ function NewProjectModal({
         })}
       </div>
 
+      <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mt-4 block">
+        Workspace Folder
+      </label>
+      <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+        <button
+          type="button"
+          onClick={() => setWorkspaceKind("managed")}
+          className={`text-left px-2.5 py-2 rounded border transition-colors cursor-pointer ${
+            workspaceKind === "managed"
+              ? "border-emerald-500/50 bg-emerald-500/5"
+              : "border-slate-800 bg-slate-900 hover:border-slate-700"
+          }`}
+        >
+          <span className="text-[11px] font-medium text-slate-200">New folder</span>
+          <p className="text-[10px] text-slate-500 mt-0.5">Created for you in your default projects location.</p>
+        </button>
+        <button
+          type="button"
+          onClick={() => setWorkspaceKind("linked")}
+          className={`text-left px-2.5 py-2 rounded border transition-colors cursor-pointer ${
+            workspaceKind === "linked"
+              ? "border-emerald-500/50 bg-emerald-500/5"
+              : "border-slate-800 bg-slate-900 hover:border-slate-700"
+          }`}
+        >
+          <span className="text-[11px] font-medium text-slate-200">Existing folder</span>
+          <p className="text-[10px] text-slate-500 mt-0.5">Link a folder already on disk.</p>
+        </button>
+      </div>
+
+      {workspaceKind === "linked" && (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <div className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-400 truncate">
+            {linkedPath ?? "No folder chosen"}
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => void chooseLinkedFolder()}>
+            Choose…
+          </Button>
+        </div>
+      )}
+
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onClose}>
           Cancel
         </Button>
-        <Button variant="primary" size="sm" onClick={submit} disabled={!name.trim()}>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={submit}
+          disabled={!name.trim() || (workspaceKind === "linked" && !linkedPath)}
+        >
           Create
         </Button>
       </div>
