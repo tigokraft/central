@@ -1,6 +1,8 @@
 import { type ChangeEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { ChevronRight, ChevronDown, Folder, File as FileIcon } from "lucide-react";
 import { cn } from "../../lib/cn";
+import { GIT_STATUS_DOT_CLASS } from "../../store/gitStatusStore";
+import { type GitFileStatus } from "../../lib/gitStatus";
 
 interface FileTreeRowProps {
   depth: number;
@@ -10,6 +12,7 @@ interface FileTreeRowProps {
   isSelected?: boolean;
   isEditing?: boolean;
   editingValue?: string;
+  gitStatus?: GitFileStatus | null;
   onEditingValueChange?: (value: string) => void;
   onCommitEdit?: () => void;
   onCancelEdit?: () => void;
@@ -28,6 +31,7 @@ export default function FileTreeRow({
   isSelected,
   isEditing,
   editingValue,
+  gitStatus,
   onEditingValueChange,
   onCommitEdit,
   onCancelEdit,
@@ -73,6 +77,9 @@ export default function FileTreeRow({
         />
       ) : (
         <span className="truncate">{name}</span>
+      )}
+      {!isEditing && gitStatus && (
+        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0 ml-auto", GIT_STATUS_DOT_CLASS[gitStatus])} />
       )}
     </div>
   );

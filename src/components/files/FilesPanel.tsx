@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import { listen } from "@tauri-apps/api/event";
 import { FilePlus, FolderPlus, Pencil, Trash2 } from "lucide-react";
 import { useCanvasStore } from "../../store/canvasStore";
+import { useEditorStore } from "../../store/editorStore";
+import { useGitStatusStore, statusFor } from "../../store/gitStatusStore";
 import {
   type FsEntry,
   createDir,
@@ -9,14 +11,12 @@ import {
   deletePath,
   joinPath,
   listDir,
-  readFile,
   renamePath,
 } from "../../lib/workspaceFs";
 import IconButton from "../ui/IconButton";
 import Modal from "../ui/Modal";
 import Button from "../ui/Button";
 import FileTreeRow from "./FileTreeRow";
-import FilePreview from "./FilePreview";
 
 interface Row {
   path: string;
@@ -61,10 +61,11 @@ export default function FilesPanel() {
     childrenCacheRef.current = childrenCache;
   }, [childrenCache]);
 
-  const [selected, setSelected] = useState<string | null>(null);
-  const [previewContent, setPreviewContent] = useState<string | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const activePath = useEditorStore((state) => state.activePath);
+  const openFile = useEditorStore((state) => state.openFile);
+  const editorTabs = useEditorStore((state) => state.tabs);
+  const closeEditorFile = useEditorStore((state) => state.closeFile);
+  const gitStatusByPath = useGitStatusStore((state) => state.byPath);
 
   const [editing, setEditing] = useState<EditState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -84,27 +85,34 @@ export default function FilesPanel() {
     [activeProjectId]
   );
 
-  // Reset everything and load the root whenever the active project changes.
+  // Reset everything and load the root whenever the active project changes. The editor's open
+  // tabs and the git status map are both scoped to a single project too, so they reset here
+  // alongside the tree rather than each owning a duplicate activeProjectId effect.
   useEffect(() => {
     setChildrenCache({});
     setExpandedDirs(new Set());
-    setSelected(null);
-    setPreviewContent(null);
-    setPreviewError(null);
     setEditing(null);
     setContextMenu(null);
     setDeleteTarget(null);
-    if (activeProjectId) void loadDir("");
+    useEditorStore.getState().resetForProject(activeProjectId);
+    useGitStatusStore.getState().reset(activeProjectId);
+    if (activeProjectId) {
+      void loadDir("");
+      void useGitStatusStore.getState().refresh(activeProjectId);
+    }
   }, [activeProjectId, loadDir]);
 
   // The watcher event only reports which paths changed, not what changed about them; simplest
   // correct response is to refresh every directory the user has actually visited (root plus
   // every expanded dir still in the cache) rather than trying to map changed paths to cache keys.
+  // Open editor tabs and the git status map are reconciled the same way, on every event.
   useEffect(() => {
     if (!activeProjectId) return;
     let unlisten: (() => void) | undefined;
     void listen("workspace-fs-changed", () => {
       Object.keys(childrenCacheRef.current).forEach((dir) => void loadDir(dir));
+      useEditorStore.getState().handleExternalChange();
+      void useGitStatusStore.getState().refresh(activeProjectId);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -131,27 +139,17 @@ export default function FilesPanel() {
     });
   };
 
-  const selectFile = async (path: string) => {
+  const openInEditor = (path: string) => {
     if (!activeProjectId) return;
-    setSelected(path);
-    setPreviewLoading(true);
-    setPreviewError(null);
-    setPreviewContent(null);
-    try {
-      setPreviewContent(await readFile(activeProjectId, path));
-    } catch (err) {
-      setPreviewError(String(err));
-    } finally {
-      setPreviewLoading(false);
-    }
+    void openFile(activeProjectId, path);
   };
 
-  const clearSelectionIfWithin = (path: string) => {
-    if (selected && (selected === path || selected.startsWith(`${path}/`))) {
-      setSelected(null);
-      setPreviewContent(null);
-      setPreviewError(null);
-    }
+  // Deleting a file or folder should close any editor tabs it (or its descendants) currently
+  // has open, rather than leaving them pointing at a now-nonexistent path.
+  const closeTabsWithin = (path: string) => {
+    Object.keys(editorTabs).forEach((tabPath) => {
+      if (tabPath === path || tabPath.startsWith(`${path}/`)) closeEditorFile(tabPath);
+    });
   };
 
   const startCreate = (dir: string, depth: number, kind: "file" | "dir") => {
@@ -186,7 +184,12 @@ export default function FilesPanel() {
         if (name === edit.originalPath.split("/").pop()) return;
         const to = joinPath(edit.dir, name);
         await renamePath(activeProjectId, edit.originalPath, to);
-        if (selected === edit.originalPath) setSelected(to);
+        // Reopen at the new path rather than trying to rekey the tab in place — simpler, and
+        // renaming a file with unsaved edits open is rare enough not to warrant a dedicated path.
+        if (editorTabs[edit.originalPath]) {
+          closeEditorFile(edit.originalPath);
+          openInEditor(to);
+        }
       } else {
         const path = joinPath(edit.dir, name);
         if (edit.kind === "file") await createFile(activeProjectId, path);
@@ -211,7 +214,7 @@ export default function FilesPanel() {
       await deletePath(activeProjectId, target.path, force);
       setDeleteTarget(null);
       setDeleteTrashFailed(null);
-      clearSelectionIfWithin(target.path);
+      closeTabsWithin(target.path);
       await loadDir(parentDir(target.path));
     } catch (err) {
       if (force) {
@@ -286,33 +289,20 @@ export default function FilesPanel() {
                 name={row.name}
                 kind={row.kind}
                 isExpanded={expandedDirs.has(row.path)}
-                isSelected={selected === row.path}
+                isSelected={activePath === row.path}
                 isEditing={isEditingRow}
                 editingValue={isEditingRow ? editing?.value ?? "" : undefined}
+                gitStatus={statusFor(gitStatusByPath, row.path, row.kind === "dir")}
                 onEditingValueChange={(value) => setEditing((prev) => (prev ? { ...prev, value } : prev))}
                 onCommitEdit={() => void commitEdit()}
                 onCancelEdit={() => setEditing(null)}
-                onClick={() => (row.kind === "dir" ? toggleDir(row.path) : void selectFile(row.path))}
+                onClick={() => (row.kind === "dir" ? toggleDir(row.path) : openInEditor(row.path))}
                 onContextMenu={(e) => openContextMenu(e, row)}
               />
             );
           })
         )}
       </div>
-
-      {selected && (
-        <FilePreview
-          path={selected}
-          loading={previewLoading}
-          error={previewError}
-          content={previewContent}
-          onClose={() => {
-            setSelected(null);
-            setPreviewContent(null);
-            setPreviewError(null);
-          }}
-        />
-      )}
 
       {contextMenu && (
         <div

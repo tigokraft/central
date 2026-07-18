@@ -4,11 +4,14 @@ import Sidebar from "../Sidebar";
 import InfiniteCanvas from "./InfiniteCanvas";
 import OrchestratorBar from "./OrchestratorBar";
 import PipelineTabBar from "./PipelineTabBar";
+import EditorPanel from "../editor/EditorPanel";
 import { useCanvasStore } from "../../store/canvasStore";
+import { useEditorStore } from "../../store/editorStore";
 
 export default function CanvasWorkspaceView() {
   const nodes = useCanvasStore((state) => state.nodes);
   const activeProjectId = useCanvasStore((state) => state.activeProjectId);
+  const hasOpenFiles = useEditorStore((state) => state.order.length > 0);
   const [showMinimap, setShowMinimap] = useState(false);
 
   // Sync active processes with Sidebar monitor
@@ -32,11 +35,14 @@ export default function CanvasWorkspaceView() {
         />
         {activeProjectId && <PipelineTabBar projectId={activeProjectId} />}
         <OrchestratorBar />
-        <div className="flex-1 relative">
-          <InfiniteCanvas
-            showMinimap={showMinimap}
-            setShowMinimap={setShowMinimap}
-          />
+        <div className="flex-1 flex min-h-0">
+          <div className="flex-1 relative">
+            <InfiniteCanvas
+              showMinimap={showMinimap}
+              setShowMinimap={setShowMinimap}
+            />
+          </div>
+          {hasOpenFiles && <EditorPanel />}
         </div>
       </div>
     </div>
