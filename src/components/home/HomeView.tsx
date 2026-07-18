@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Folder, Plus, X, Check, Settings, FolderOpen } from "lucide-react";
 import Panel from "../ui/Panel";
@@ -31,6 +31,39 @@ interface ProjectGraph {
 
 export default function HomeView() {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    project: ProjectMeta;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [contextMenu]);
+
+  const openContextMenu = (e: ReactMouseEvent, project: ProjectMeta) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, project });
+  };
+
+  const getRevealLabel = () => {
+    const ua = navigator.userAgent;
+    if (ua.includes("Mac")) return "Reveal in Finder";
+    if (ua.includes("Windows")) return "Reveal in File Explorer";
+    return "Reveal in File Manager";
+  };
+
+  const revealProject = async (project: ProjectMeta) => {
+    try {
+      await invoke("show_in_folder", { projectId: project.id, path: "" });
+    } catch (err) {
+      console.error("Failed to reveal project in explorer:", err);
+    }
+  };
   const [thumbnailNodes, setThumbnailNodes] = useState<Record<string, CanvasNode[]>>({});
   const [loading, setLoading] = useState(true);
   const [showNewProject, setShowNewProject] = useState(false);
@@ -155,6 +188,7 @@ export default function HomeView() {
                 key={project.id}
                 className="p-4 text-left cursor-pointer hover:border-emerald-500/40 transition-colors"
                 onClick={() => void handleOpenProject(project.id)}
+                onContextMenu={(e) => openContextMenu(e, project)}
               >
                 <NodeLayoutThumbnail
                   nodes={thumbnailNodes[project.id] ?? []}
@@ -183,6 +217,25 @@ export default function HomeView() {
         <NewProjectModal onClose={() => setShowNewProject(false)} onCreate={handleCreateProject} />
       )}
       {showWorkspaceSettings && <WorkspaceSettingsModal onClose={() => setShowWorkspaceSettings(false)} />}
+
+      {contextMenu && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "fixed", left: contextMenu.x, top: contextMenu.y }}
+          className="w-48 bg-slate-900 border border-slate-800 rounded-lg shadow-overlay py-1 z-50"
+        >
+          <button
+            onClick={() => {
+              void revealProject(contextMenu.project);
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 hover:text-slate-100 cursor-pointer text-left"
+          >
+            <FolderOpen size={12} className="text-slate-400" />
+            {getRevealLabel()}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
