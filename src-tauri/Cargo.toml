@@ -32,4 +32,6 @@ serde_yaml = "0.9"
 lancedb = "0.31"
 futures = "0.3.32"
 arrow = "58.3.0"
+notify = "6"
+trash = "3"
 

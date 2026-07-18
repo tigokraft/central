@@ -8,11 +8,13 @@ import {
   Terminal as TerminalIcon,
   Rocket,
   Plug,
-  Sparkles
+  Sparkles,
+  FolderTree
 } from "lucide-react";
 import DeploymentsTracker from "./sidebar/DeploymentsTracker";
 import McpServersPanel from "./sidebar/McpServersPanel";
 import RunHistoryPanel from "./sidebar/RunHistoryPanel";
+import FilesPanel from "./files/FilesPanel";
 
 interface SidebarProps {
   activeProcesses: { id: string; label: string; isRunning: boolean }[];
@@ -24,6 +26,7 @@ export default function Sidebar({ activeProcesses }: SidebarProps) {
   const [deploymentsOpen, setDeploymentsOpen] = useState(true);
   const [mcpOpen, setMcpOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(true);
+  const [filesOpen, setFilesOpen] = useState(true);
 
   return (
     <div
@@ -54,6 +57,7 @@ export default function Sidebar({ activeProcesses }: SidebarProps) {
         {isCollapsed ? (
           <div className="flex flex-col items-center gap-4 py-2 text-slate-500">
             <div title="Process Monitor"><Activity size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
+            <div title="Workspace Files"><FolderTree size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
             <div title="Deployments"><Rocket size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
             <div title="MCP Servers"><Plug size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
             <div title="Run History"><Sparkles size={18} className="hover:text-emerald-400 cursor-pointer" /></div>
@@ -102,6 +106,22 @@ export default function Sidebar({ activeProcesses }: SidebarProps) {
                   )}
                 </div>
               )}
+            </div>
+
+            {/* Workspace Files: read-only tree + preview of the project's on-disk folder */}
+            <div className="space-y-1">
+              <button
+                onClick={() => setFilesOpen(!filesOpen)}
+                className="w-full flex items-center justify-between text-xs font-semibold text-slate-400 hover:text-slate-200 px-2 py-1 cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                  <FolderTree size={12} className="text-emerald-500" />
+                  Workspace Files
+                </span>
+                {filesOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+
+              {filesOpen && <FilesPanel />}
             </div>
 
             {/* Run History: disposable ephemeral checks + persistent terminal command log */}
