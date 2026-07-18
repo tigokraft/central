@@ -247,6 +247,12 @@ interface CanvasState {
   // Figma-style alignment guide lines shown while dragging a node; null when not dragging.
   dragGuides: { vertical: number[]; horizontal: number[] } | null;
   setDragGuides: (guides: { vertical: number[]; horizontal: number[] } | null) => void;
+
+  // Id of the terminal node currently expanded into a fullscreen overlay ("focus mode"), or
+  // null when none is. Transient UI state like dragGuides — never persisted/undoable, since
+  // it doesn't change the node's actual stored x/y/width/height.
+  focusedNodeId: string | null;
+  setFocusedNodeId: (id: string | null) => void;
 }
 
 export const useCanvasStore = create<CanvasState>()(
@@ -257,6 +263,9 @@ export const useCanvasStore = create<CanvasState>()(
 
   dragGuides: null,
   setDragGuides: (guides) => set({ dragGuides: guides }),
+
+  focusedNodeId: null,
+  setFocusedNodeId: (id) => set({ focusedNodeId: id }),
 
   viewport: { x: 0, y: 0, zoom: 1 },
   nodes: [],
@@ -626,6 +635,7 @@ export const useCanvasStore = create<CanvasState>()(
       terminalRunHistory: [],
       activeTool: "select",
       dragGuides: null,
+      focusedNodeId: null,
     });
     useCanvasStore.temporal.getState().clear();
   },
