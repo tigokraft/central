@@ -520,7 +520,10 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   }
 
   const card = (
-    <div className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-lg shadow-panel overflow-hidden flex flex-col transition-colors hover:border-emerald-500/50 select-none">
+    <div
+      data-node-id={id}
+      className="relative w-full h-full bg-slate-900 border border-slate-800 rounded-lg shadow-panel overflow-hidden flex flex-col transition-colors hover:border-emerald-500/50 select-none"
+    >
       {/* Sockets - Top and Bottom handles for TerminalNode. Hidden in focus mode: the
           overlay isn't positioned in canvas space, so a cable endpoint here would be
           meaningless. */}
