@@ -57,6 +57,42 @@ export function getNodesBounds(nodes: Rect[]): Bounds | null {
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 }
 
+export interface ThumbnailLayout {
+  bounds: Bounds;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+// Shared by Minimap and Home's project-card thumbnails: fits `nodes`' bounding box (plus
+// `padding` canvas units on each side) into a `mapWidth` x `mapHeight` box, centered, without
+// distorting aspect ratio. Falls back to a fixed 1000x1000 canvas-space box when there are no
+// nodes so callers get a stable (if empty) layout rather than a division by zero.
+export function computeThumbnailLayout(
+  nodes: Rect[],
+  mapWidth: number,
+  mapHeight: number,
+  padding = 200
+): ThumbnailLayout {
+  const raw = getNodesBounds(nodes);
+  const bounds: Bounds = raw
+    ? {
+        minX: raw.minX - padding,
+        minY: raw.minY - padding,
+        maxX: raw.maxX + padding,
+        maxY: raw.maxY + padding,
+        width: raw.width + padding * 2,
+        height: raw.height + padding * 2,
+      }
+    : { minX: 0, minY: 0, maxX: 1000, maxY: 1000, width: 1000, height: 1000 };
+
+  const scale = Math.min(mapWidth / bounds.width, mapHeight / bounds.height);
+  const offsetX = (mapWidth - bounds.width * scale) / 2;
+  const offsetY = (mapHeight - bounds.height * scale) / 2;
+
+  return { bounds, scale, offsetX, offsetY };
+}
+
 export interface AlignmentGuideResult {
   // Canvas-space x/y positions to draw guide lines at.
   vertical: number[];
