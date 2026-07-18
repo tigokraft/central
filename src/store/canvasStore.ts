@@ -162,8 +162,8 @@ export interface Viewport {
   zoom: number;
 }
 
-// Starting graph handed to hydrateFromProject() when a brand-new project is created (see
-// HomeView's "New Project" flow) — an empty canvas, matching the store's own empty boot state.
+// Fallback graph handed to hydratePipeline() when a pipeline's graph file can't be loaded —
+// an empty canvas, matching the store's own empty boot state.
 export const NEW_PROJECT_TEMPLATE: { nodes: CanvasNode[]; edges: CanvasEdge[]; viewport: Viewport } = {
   nodes: [],
   edges: [],
@@ -177,6 +177,9 @@ interface CanvasState {
   // Id of the project currently persisted to disk; null until a project has been opened
   // (e.g. still on the Home view). Drives the autosave subscribe below.
   activeProjectId: string | null;
+  // Id of the pipeline (tab) within activeProjectId currently loaded onto the canvas; null
+  // until a pipeline has been hydrated. Autosave writes to this pipeline's graph file.
+  activePipelineId: string | null;
   activeTool: "select" | "hand" | "frame";
   draggingEdge: {
     sourceId: string;
@@ -225,8 +228,9 @@ interface CanvasState {
   stopDraggingEdge: () => void;
 
   // Persistence
-  hydrateFromProject: (
+  hydratePipeline: (
     projectId: string,
+    pipelineId: string,
     graph: { nodes: CanvasNode[]; edges: CanvasEdge[]; viewport: Viewport }
   ) => void;
 
@@ -274,6 +278,7 @@ export const useCanvasStore = create<CanvasState>()(
   nodes: [],
   edges: [],
   activeProjectId: null,
+  activePipelineId: null,
   activeTool: "select",
   draggingEdge: null,
   pointerCanvasPosition: null,
@@ -618,14 +623,16 @@ export const useCanvasStore = create<CanvasState>()(
 
   stopDraggingEdge: () => set({ draggingEdge: null }),
 
-  // Replaces the entire canvas with a persisted project's graph (called by Phase 3c's
-  // openProject flow). Resets all transient/derived state so nothing from the previously
-  // open project (selection, in-flight drags, execution status) leaks into the new one, and
-  // clears undo history since past states referred to the old project's nodes/edges.
-  hydrateFromProject: (projectId, graph) => {
+  // Replaces the entire canvas with one pipeline's persisted graph (called when a project is
+  // opened and whenever the pipeline tab bar switches tabs). Resets all transient/derived
+  // state so nothing from the previously loaded pipeline (selection, in-flight drags,
+  // execution status) leaks into the new one, and clears undo history since past states
+  // referred to the old pipeline's nodes/edges.
+  hydratePipeline: (projectId, pipelineId, graph) => {
     viewportController.setInstant(graph.viewport);
     set({
       activeProjectId: projectId,
+      activePipelineId: pipelineId,
       nodes: graph.nodes,
       edges: graph.edges,
       viewport: graph.viewport,
@@ -722,32 +729,44 @@ viewportController.init(useCanvasStore.getState().viewport, (vp) =>
 const AUTOSAVE_DEBOUNCE_MS = 2000;
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-async function persistActiveProject() {
-  const { activeProjectId, nodes, edges, viewport } = useCanvasStore.getState();
-  if (!activeProjectId) return;
+async function persistActivePipeline() {
+  const { activeProjectId, activePipelineId, nodes, edges, viewport } = useCanvasStore.getState();
+  if (!activeProjectId || !activePipelineId) return;
   try {
-    await invoke("save_project_graph", {
+    await invoke("save_pipeline_graph", {
       projectId: activeProjectId,
+      pipelineId: activePipelineId,
       graph: { nodes, edges, viewport },
     });
   } catch (err) {
-    console.error("Failed to autosave project:", err);
+    console.error("Failed to autosave pipeline:", err);
   }
 }
 
-// Debounced autosave: any nodes/edges mutation while a project is open schedules a write to
-// that project's graph.json ~2s after the last change, coalescing bursts (drags, streaming
+// Debounced autosave: any nodes/edges mutation while a pipeline is loaded schedules a write to
+// that pipeline's graph file ~2s after the last change, coalescing bursts (drags, streaming
 // node updates) into a single save.
 useCanvasStore.subscribe((state, prevState) => {
-  if (!state.activeProjectId) return;
+  if (!state.activeProjectId || !state.activePipelineId) return;
   if (state.nodes === prevState.nodes && state.edges === prevState.edges) return;
 
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
     autosaveTimer = null;
-    void persistActiveProject();
+    void persistActivePipeline();
   }, AUTOSAVE_DEBOUNCE_MS);
 });
+
+// Immediately writes any pending autosave and cancels the debounce timer. Callers that are
+// about to swap out nodes/edges from under the store (e.g. the pipeline tab bar switching
+// tabs) must call this first so in-flight edits aren't lost to the still-pending debounce.
+export async function flushActivePipelineSave() {
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+  await persistActivePipeline();
+}
 
 // zundo's automatic per-set() tracking is deliberately disabled here (see below) — every
 // action in this store rebuilds `nodes`/`edges` via .map()/spread even when nothing

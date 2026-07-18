@@ -9,6 +9,7 @@ import WorkspaceSettingsModal from "../WorkspaceSettingsModal";
 import { useAppViewStore } from "../../store/appViewStore";
 import { useCanvasStore, NEW_PROJECT_TEMPLATE, type CanvasNode, type CanvasEdge, type Viewport } from "../../store/canvasStore";
 import { PROJECT_TEMPLATES, type ProjectTemplate } from "../../lib/projectTemplates";
+import { pickMostRecentPipeline, type PipelineMeta } from "../../lib/pipelines";
 
 type WorkspaceKind = "managed" | "linked";
 
@@ -53,11 +54,19 @@ export default function HomeView() {
     }
   };
 
+  // A project's thumbnail reflects whichever pipeline was worked on most recently, not
+  // necessarily the one that opens first.
   const loadThumbnails = async (list: ProjectMeta[]) => {
     const entries = await Promise.all(
       list.map(async (project): Promise<[string, CanvasNode[]]> => {
         try {
-          const graph = await invoke<ProjectGraph | null>("load_project_graph", { projectId: project.id });
+          const pipelines = await invoke<PipelineMeta[]>("list_pipelines", { projectId: project.id });
+          const target = pickMostRecentPipeline(pipelines);
+          if (!target) return [project.id, []];
+          const graph = await invoke<ProjectGraph | null>("load_pipeline_graph", {
+            projectId: project.id,
+            pipelineId: target.id,
+          });
           return [project.id, graph?.nodes ?? []];
         } catch (err) {
           console.error(`Failed to load graph for thumbnail (${project.id}):`, err);
@@ -72,8 +81,14 @@ export default function HomeView() {
     try {
       const meta = await invoke<ProjectMeta>("ensure_project_workspace", { projectId });
       await invoke("set_active_project_path", { path: meta.workspacePath });
-      const graph = await invoke<ProjectGraph | null>("load_project_graph", { projectId });
-      useCanvasStore.getState().hydrateFromProject(projectId, graph ?? NEW_PROJECT_TEMPLATE);
+      const pipelines = await invoke<PipelineMeta[]>("list_pipelines", { projectId });
+      const target = pickMostRecentPipeline(pipelines);
+      const graph = target
+        ? await invoke<ProjectGraph | null>("load_pipeline_graph", { projectId, pipelineId: target.id })
+        : null;
+      useCanvasStore
+        .getState()
+        .hydratePipeline(projectId, target?.id ?? "", graph ?? NEW_PROJECT_TEMPLATE);
       openProject(projectId);
     } catch (err) {
       console.error("Failed to open project:", err);
@@ -93,9 +108,11 @@ export default function HomeView() {
         linkedPath,
       });
       await invoke("set_active_project_path", { path: meta.workspacePath });
+      const pipelines = await invoke<PipelineMeta[]>("list_pipelines", { projectId: meta.id });
+      const mainPipeline = pipelines[0];
       const graph = template.build();
-      await invoke("save_project_graph", { projectId: meta.id, graph });
-      useCanvasStore.getState().hydrateFromProject(meta.id, graph);
+      await invoke("save_pipeline_graph", { projectId: meta.id, pipelineId: mainPipeline.id, graph });
+      useCanvasStore.getState().hydratePipeline(meta.id, mainPipeline.id, graph);
       openProject(meta.id);
     } catch (err) {
       console.error("Failed to create project:", err);

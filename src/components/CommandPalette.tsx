@@ -25,6 +25,7 @@ import {
   type Viewport,
 } from "../store/canvasStore";
 import { useAppViewStore } from "../store/appViewStore";
+import { pickMostRecentPipeline, type PipelineMeta } from "../lib/pipelines";
 
 interface CommandPaletteProps {
   onClose: () => void;
@@ -108,8 +109,12 @@ export default function CommandPalette({ onClose, toggleMinimap }: CommandPalett
 
   const switchToProject = async (projectId: string) => {
     try {
-      const graph = await invoke<ProjectGraph | null>("load_project_graph", { projectId });
-      useCanvasStore.getState().hydrateFromProject(projectId, graph ?? NEW_PROJECT_TEMPLATE);
+      const pipelines = await invoke<PipelineMeta[]>("list_pipelines", { projectId });
+      const target = pickMostRecentPipeline(pipelines);
+      const graph = target
+        ? await invoke<ProjectGraph | null>("load_pipeline_graph", { projectId, pipelineId: target.id })
+        : null;
+      useCanvasStore.getState().hydratePipeline(projectId, target?.id ?? "", graph ?? NEW_PROJECT_TEMPLATE);
       openProject(projectId);
     } catch (err) {
       console.error("Failed to open project:", err);
