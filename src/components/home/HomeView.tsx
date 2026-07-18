@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Folder, Plus, X } from "lucide-react";
+import { Folder, Plus, X, Check } from "lucide-react";
 import Panel from "../ui/Panel";
 import Button from "../ui/Button";
 import Modal from "../ui/Modal";
 import { useAppViewStore } from "../../store/appViewStore";
 import { useCanvasStore, NEW_PROJECT_TEMPLATE, type CanvasNode, type CanvasEdge, type Viewport } from "../../store/canvasStore";
+import { PROJECT_TEMPLATES, type ProjectTemplate } from "../../lib/projectTemplates";
 
 interface ProjectMeta {
   id: string;
@@ -52,11 +53,12 @@ export default function HomeView() {
     }
   };
 
-  const handleCreateProject = async (name: string) => {
+  const handleCreateProject = async (name: string, template: ProjectTemplate) => {
     try {
       const meta = await invoke<ProjectMeta>("create_project", { name });
-      await invoke("save_project_graph", { projectId: meta.id, graph: NEW_PROJECT_TEMPLATE });
-      useCanvasStore.getState().hydrateFromProject(meta.id, NEW_PROJECT_TEMPLATE);
+      const graph = template.build();
+      await invoke("save_project_graph", { projectId: meta.id, graph });
+      useCanvasStore.getState().hydrateFromProject(meta.id, graph);
       openProject(meta.id);
     } catch (err) {
       console.error("Failed to create project:", err);
@@ -120,18 +122,20 @@ function NewProjectModal({
   onCreate,
 }: {
   onClose: () => void;
-  onCreate: (name: string) => void;
+  onCreate: (name: string, template: ProjectTemplate) => void;
 }) {
   const [name, setName] = useState("");
+  const [templateId, setTemplateId] = useState(PROJECT_TEMPLATES[0].id);
 
   const submit = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    onCreate(trimmed);
+    const template = PROJECT_TEMPLATES.find((t) => t.id === templateId) ?? PROJECT_TEMPLATES[0];
+    onCreate(trimmed, template);
   };
 
   return (
-    <Modal onClose={onClose} width={360}>
+    <Modal onClose={onClose} width={440}>
       <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
         <span className="text-xs font-semibold text-slate-200 uppercase tracking-wide">New Project</span>
         <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors cursor-pointer">
@@ -149,6 +153,33 @@ function NewProjectModal({
         placeholder="My Project"
         className="w-full mt-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50"
       />
+
+      <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mt-4 block">
+        Starting Point
+      </label>
+      <div className="mt-1.5 space-y-1.5">
+        {PROJECT_TEMPLATES.map((template) => {
+          const selected = template.id === templateId;
+          return (
+            <button
+              key={template.id}
+              type="button"
+              onClick={() => setTemplateId(template.id)}
+              className={`w-full text-left px-2.5 py-2 rounded border transition-colors cursor-pointer ${
+                selected
+                  ? "border-emerald-500/50 bg-emerald-500/5"
+                  : "border-slate-800 bg-slate-900 hover:border-slate-700"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-slate-200">{template.name}</span>
+                {selected && <Check size={12} className="text-emerald-400 shrink-0" />}
+              </div>
+              <p className="text-[10px] text-slate-500 mt-0.5">{template.description}</p>
+            </button>
+          );
+        })}
+      </div>
 
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onClose}>
