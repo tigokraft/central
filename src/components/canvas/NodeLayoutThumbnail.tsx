@@ -7,7 +7,7 @@ export interface ThumbnailNode extends Rect {
 }
 
 export function getNodeBlockClass(type: string): string {
-  return type === "actionContainerNode" || type === "actionFrameNode"
+  return type === "actionContainerNode"
     ? "bg-transparent border border-slate-700"
     : "bg-emerald-500/50 border border-emerald-500/80";
 }

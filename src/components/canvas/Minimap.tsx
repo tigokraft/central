@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCanvasStore } from "../../store/canvasStore";
-import { getNodesBounds } from "../../lib/canvasGeometry";
+import { computeThumbnailLayout } from "../../lib/canvasGeometry";
+import { getNodeBlockClass } from "./NodeLayoutThumbnail";
 
 interface MinimapProps {
   containerWidth: number;
@@ -14,34 +15,14 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
   const mapRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Calculate the bounds of all nodes
-  const bounds = useMemo(() => {
-    const raw = getNodesBounds(nodes);
-    if (!raw) {
-      return { minX: 0, minY: 0, maxX: 1000, maxY: 1000, width: 1000, height: 1000 };
-    }
-
-    // Add padding around bounds
-    const padding = 200;
-    const minX = raw.minX - padding;
-    const minY = raw.minY - padding;
-    const maxX = raw.maxX + padding;
-    const maxY = raw.maxY + padding;
-
-    return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
-  }, [nodes]);
-
   // Map canvas coordinates to minimap coordinates (150x100 box)
   const mapWidth = 150;
   const mapHeight = 100;
 
-  const scaleX = mapWidth / bounds.width;
-  const scaleY = mapHeight / bounds.height;
-  const scale = Math.min(scaleX, scaleY);
-
-  // Offset to center the nodes inside the minimap
-  const offsetX = (mapWidth - bounds.width * scale) / 2;
-  const offsetY = (mapHeight - bounds.height * scale) / 2;
+  const { bounds, scale, offsetX, offsetY } = useMemo(
+    () => computeThumbnailLayout(nodes, mapWidth, mapHeight, 200),
+    [nodes]
+  );
 
   const toMapCoords = (cx: number, cy: number) => {
     return {
@@ -117,11 +98,6 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
           const w = node.width * scale;
           const h = node.height * scale;
 
-          const color =
-            node.type === "actionContainerNode"
-              ? "bg-transparent border border-slate-700"
-              : "bg-emerald-500/50 border border-emerald-500/80";
-
           return (
             <div
               key={node.id}
@@ -132,7 +108,7 @@ export default function Minimap({ containerWidth, containerHeight }: MinimapProp
                 width: Math.max(2, w),
                 height: Math.max(2, h),
               }}
-              className={`${color} rounded-sm`}
+              className={`rounded-sm ${getNodeBlockClass(node.type)}`}
             />
           );
         })}
