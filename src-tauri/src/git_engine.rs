@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use git2::{IndexAddOption, Oid, Repository, ResetType, Signature};
+use git2::{IndexAddOption, Oid, Repository, ResetType, Signature, Status, StatusOptions};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
@@ -34,6 +34,21 @@ pub struct HandoffResult {
 pub struct RepoHeadInfo {
     pub branch: String,
     pub commit_sha: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitFileStatus {
+    Modified,
+    Added,
+    Untracked,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusEntry {
+    pub path: String,
+    pub status: GitFileStatus,
 }
 
 struct WorktreeHandle {
@@ -454,6 +469,86 @@ pub fn get_diff_for_commit(
     diff_for_commit(&workspace, &sha)
 }
 
+/// Classifies a git2 status bitset into the three buckets the files panel/editor tabs decorate
+/// with. `WT_NEW` without `INDEX_NEW` is a plain untracked file; `INDEX_NEW` is staged-but-new
+/// ("added"); anything else with a nonzero status (modified, deleted, renamed, typechanged, in
+/// either the index or the working tree) is folded into "modified" since the UI only needs a
+/// three-way distinction, not the full staged/unstaged matrix.
+fn classify_status(status: Status) -> Option<GitFileStatus> {
+    if status.is_wt_new() {
+        Some(GitFileStatus::Untracked)
+    } else if status.is_index_new() {
+        Some(GitFileStatus::Added)
+    } else if status.is_ignored() || status == Status::CURRENT {
+        None
+    } else {
+        Some(GitFileStatus::Modified)
+    }
+}
+
+// Pure and AppHandle-free so it can be exercised directly in unit tests against a tempdir repo.
+fn git_status_for(workspace: &Path) -> Result<Vec<GitStatusEntry>, String> {
+    let repo = Repository::open(workspace).map_err(|e| e.to_string())?;
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_ignored(false);
+    let statuses = repo.statuses(Some(&mut opts)).map_err(|e| e.to_string())?;
+
+    let mut entries = Vec::new();
+    for entry in statuses.iter() {
+        let Some(path) = entry.path() else { continue };
+        if let Some(status) = classify_status(entry.status()) {
+            entries.push(GitStatusEntry {
+                path: path.to_string(),
+                status,
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// Renders the workspace's git status (modified/added/untracked relative to HEAD) for the files
+/// panel tree and editor tab decorations.
+#[tauri::command]
+pub fn get_git_status(project_id: String, app: AppHandle) -> Result<Vec<GitStatusEntry>, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    git_status_for(&workspace)
+}
+
+// Pure and AppHandle-free so it can be exercised directly in unit tests. Returns `None` when the
+// path didn't exist at HEAD (a new/untracked file), which the editor's diff-vs-HEAD toggle
+// renders as an empty "before" side rather than an error.
+fn file_at_head(workspace: &Path, relative: &str) -> Result<Option<String>, String> {
+    let repo = Repository::open(workspace).map_err(|e| e.to_string())?;
+    let head_tree = match repo.head().and_then(|h| h.peel_to_tree()) {
+        Ok(tree) => tree,
+        Err(_) => return Ok(None), // unborn HEAD (no commits yet)
+    };
+    let entry = match head_tree.get_path(Path::new(relative)) {
+        Ok(entry) => entry,
+        Err(_) => return Ok(None),
+    };
+    let object = entry.to_object(&repo).map_err(|e| e.to_string())?;
+    let blob = object
+        .as_blob()
+        .ok_or_else(|| "Path is not a file at HEAD".to_string())?;
+    String::from_utf8(blob.content().to_vec())
+        .map(Some)
+        .map_err(|_| "Cannot diff a binary file".to_string())
+}
+
+/// Fetches a file's content as of HEAD, for the editor's per-file diff-vs-HEAD toggle.
+#[tauri::command]
+pub fn get_file_at_head(
+    project_id: String,
+    path: String,
+    app: AppHandle,
+) -> Result<Option<String>, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    file_at_head(&workspace, &path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -825,5 +920,61 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&repo_a);
         let _ = std::fs::remove_dir_all(&repo_b);
+    }
+
+    #[test]
+    fn git_status_reports_untracked_added_and_modified() {
+        let repo_root = init_test_repo();
+
+        // Modify the committed file.
+        std::fs::write(repo_root.join("README.md"), "changed\n").unwrap();
+        // Stage a new file (added).
+        std::fs::write(repo_root.join("staged.txt"), "staged\n").unwrap();
+        {
+            let repo = Repository::open(&repo_root).unwrap();
+            let mut index = repo.index().unwrap();
+            index.add_path(Path::new("staged.txt")).unwrap();
+            index.write().unwrap();
+        }
+        // Leave an untracked file alone.
+        std::fs::write(repo_root.join("scratch.txt"), "scratch\n").unwrap();
+
+        let mut entries = git_status_for(&repo_root).unwrap();
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].path, "README.md");
+        assert_eq!(entries[0].status, GitFileStatus::Modified);
+        assert_eq!(entries[1].path, "scratch.txt");
+        assert_eq!(entries[1].status, GitFileStatus::Untracked);
+        assert_eq!(entries[2].path, "staged.txt");
+        assert_eq!(entries[2].status, GitFileStatus::Added);
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn git_status_omits_clean_files() {
+        let repo_root = init_test_repo();
+        let entries = git_status_for(&repo_root).unwrap();
+        assert!(entries.is_empty());
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn file_at_head_returns_committed_content() {
+        let repo_root = init_test_repo();
+        let content = file_at_head(&repo_root, "README.md").unwrap();
+        assert_eq!(content, Some("hello\n".to_string()));
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn file_at_head_returns_none_for_new_file() {
+        let repo_root = init_test_repo();
+        std::fs::write(repo_root.join("new.txt"), "new\n").unwrap();
+        let content = file_at_head(&repo_root, "new.txt").unwrap();
+        assert_eq!(content, None);
+        let _ = std::fs::remove_dir_all(&repo_root);
     }
 }
