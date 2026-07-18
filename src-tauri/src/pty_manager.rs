@@ -7,6 +7,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+// Called with each completed line of a session's output (newline-delimited, already stripped
+// of the trailing \r\n a PTY's line discipline adds). Lets a caller like the agents module
+// parse structured events out of a process's stdout without pty_manager itself knowing
+// anything about that structure.
+pub type PtyLineHook = Arc<dyn Fn(&str) + Send + Sync>;
+// Called once, after the session's reader loop sees EOF, with the child's exit code if it
+// could be determined.
+pub type PtyExitHook = Arc<dyn Fn(Option<i32>) + Send + Sync>;
+
+// Grouped into one struct (rather than two more spawn_pty_command parameters) purely to keep
+// that function's arg count down — both are optional and both come from the same caller.
+#[derive(Clone, Default)]
+pub struct PtyHooks {
+    pub on_line: Option<PtyLineHook>,
+    pub on_exit: Option<PtyExitHook>,
+}
+
 // Every spawned PTY gets a unique instance id, even when it reuses a node_id that a
 // previous (now-killed) session also used. This lets a stale reader thread recognize that
 // the session it was reading has already been replaced, so it never tears down or emits an
@@ -104,6 +121,7 @@ struct PtyOutputPayload {
 #[derive(Serialize, Clone)]
 struct PtyExitPayload {
     node_id: String,
+    exit_code: Option<i32>,
 }
 
 // Pure and AppHandle-free so the cwd wiring can be unit tested without spawning a real PTY.
@@ -122,16 +140,6 @@ pub fn spawn_pty(
     state: State<'_, PtyManager>,
     app_handle: AppHandle,
 ) -> Result<(), String> {
-    // 1. Clean up existing session for this node if it exists
-    {
-        let mut processes = state.processes.lock().unwrap();
-        if let Some(proc) = processes.remove(&node_id) {
-            let mut child = proc.child.lock().unwrap();
-            let _ = child.kill();
-        }
-    }
-
-    // 2. Select shell command
     let shell_name = shell.clone().unwrap_or_else(|| {
         if cfg!(target_os = "windows") {
             "cmd.exe".to_string()
@@ -143,7 +151,42 @@ pub fn spawn_pty(
     let cwd = crate::git_engine::resolve_repo_root(&app_handle);
     let cmd = build_pty_command(&shell_name, &cwd);
 
-    // 3. Open PTY pair
+    spawn_pty_command(
+        node_id,
+        cmd,
+        cols,
+        rows,
+        &state,
+        &app_handle,
+        PtyHooks::default(),
+    )
+}
+
+// Shared by both the interactive-shell `spawn_pty` command and the agents module's
+// launch_agent_session — the latter spawns whatever an AgentAdapter builds through this same
+// PTY session machinery (replace-existing, scrollback, reader thread, exit teardown) instead
+// of reimplementing it, and additionally wires up hooks to turn output into higher-level
+// agent events without pty_manager itself knowing what those are.
+pub fn spawn_pty_command(
+    node_id: String,
+    cmd: CommandBuilder,
+    cols: u16,
+    rows: u16,
+    state: &PtyManager,
+    app_handle: &AppHandle,
+    hooks: PtyHooks,
+) -> Result<(), String> {
+    let PtyHooks { on_line, on_exit } = hooks;
+    // 1. Clean up existing session for this node if it exists
+    {
+        let mut processes = state.processes.lock().unwrap();
+        if let Some(proc) = processes.remove(&node_id) {
+            let mut child = proc.child.lock().unwrap();
+            let _ = child.kill();
+        }
+    }
+
+    // 2. Open PTY pair
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -154,7 +197,7 @@ pub fn spawn_pty(
         })
         .map_err(|e| e.to_string())?;
 
-    // 4. Spawn the command
+    // 3. Spawn the command
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
 
     // Drop the slave handle to let reader detect EOF properly
@@ -184,11 +227,13 @@ pub fn spawn_pty(
         );
     }
 
-    // 5. Spawn standard thread to read from blocking reader
+    // 4. Spawn standard thread to read from blocking reader
     let node_id_clone = node_id.clone();
     let app_handle_clone = app_handle.clone();
+    let child_for_wait = child_shared.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        let mut line_buf = String::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF
@@ -197,6 +242,18 @@ pub fn spawn_pty(
                     // live later still needs its backlog.
                     scrollback_shared.lock().unwrap().append(&buf[..n]);
                     let data = String::from_utf8_lossy(&buf[..n]).to_string();
+
+                    if let Some(hook) = &on_line {
+                        line_buf.push_str(&data);
+                        while let Some(pos) = line_buf.find('\n') {
+                            let line: String = line_buf.drain(..=pos).collect();
+                            let trimmed = line.trim_end_matches(['\r', '\n']);
+                            if !trimmed.is_empty() {
+                                hook(trimmed);
+                            }
+                        }
+                    }
+
                     let payload = PtyOutputPayload {
                         node_id: node_id_clone.clone(),
                         data,
@@ -205,6 +262,17 @@ pub fn spawn_pty(
                 }
                 Err(_) => break,
             }
+        }
+
+        let exit_code = child_for_wait
+            .lock()
+            .unwrap()
+            .wait()
+            .ok()
+            .map(|status| status.exit_code() as i32);
+
+        if let Some(hook) = &on_exit {
+            hook(exit_code);
         }
 
         // Only tear down and notify the frontend if this thread's PTY instance is still
@@ -228,6 +296,7 @@ pub fn spawn_pty(
                 "pty-exit",
                 PtyExitPayload {
                     node_id: node_id_clone,
+                    exit_code,
                 },
             );
         }
@@ -242,9 +311,15 @@ pub fn write_pty(
     data: String,
     state: State<'_, PtyManager>,
 ) -> Result<(), String> {
+    write_pty_data(&node_id, &data, &state)
+}
+
+// Shared by the write_pty command and the agents module's send_agent_input /
+// stdin-prompt-delivery paths.
+pub fn write_pty_data(node_id: &str, data: &str, manager: &PtyManager) -> Result<(), String> {
     let proc = {
-        let processes = state.processes.lock().unwrap();
-        processes.get(&node_id).map(|p| p.writer.clone())
+        let processes = manager.processes.lock().unwrap();
+        processes.get(node_id).map(|p| p.writer.clone())
     };
 
     if let Some(writer_lock) = proc {
