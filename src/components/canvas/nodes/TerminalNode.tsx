@@ -34,6 +34,7 @@ import {
   TERMINAL_FONT_SIZE_MIN,
   TERMINAL_FONT_SIZE_MAX,
 } from "../../../store/settingsStore";
+import { useAgentSessionStore, type AgentEvent } from "../../../store/agentSessionStore";
 import { viewportController } from "../../../lib/viewportController";
 import Port from "../Port";
 
@@ -171,6 +172,36 @@ function lastNonEmptyLines(text: string, count: number): string[] {
   return lines.slice(-count);
 }
 
+// Short label + dot color for a node's latest AgentEvent, shown as a badge next to the
+// regular PTY status light when a session was launched via an AgentAdapter.
+function agentBadgeText(event: AgentEvent): string {
+  switch (event.type) {
+    case "Started":
+      return "Agent Running";
+    case "ToolCall":
+      return `Agent: ${event.name}`;
+    case "FileEdited":
+      return "Agent Editing";
+    case "NeedsInput":
+      return "Needs Input";
+    case "Done":
+      return `Agent Done (${event.exit_code})`;
+    case "Raw":
+      return "Agent Running";
+  }
+}
+
+function agentBadgeColor(event: AgentEvent): string {
+  switch (event.type) {
+    case "NeedsInput":
+      return "bg-amber-500 animate-pulse";
+    case "Done":
+      return event.exit_code === 0 ? "bg-emerald-500" : "bg-red-500";
+    default:
+      return "bg-emerald-500 animate-pulse";
+  }
+}
+
 export default function TerminalNode({ node }: TerminalNodeProps) {
   const { id, data } = node;
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
@@ -179,6 +210,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   const focusedNodeId = useCanvasStore((state) => state.focusedNodeId);
   const setFocusedNodeId = useCanvasStore((state) => state.setFocusedNodeId);
   const isFocused = focusedNodeId === id;
+  const agentEvent = useAgentSessionStore((state) => state.eventsByNode[id]);
   const defaultTerminalFontSize = useSettingsStore((state) => state.defaultTerminalFontSize);
   const fontSize = clampTerminalFontSize(data.terminalFontSize ?? defaultTerminalFontSize);
   const displayMode = resolveTerminalDisplayMode(data);
@@ -243,6 +275,7 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
     let cancelled = false;
     let unlistenOutput: (() => void) | null = null;
     let unlistenExit: (() => void) | null = null;
+    let unlistenAgentEvent: (() => void) | null = null;
 
     const setupPty = async () => {
       try {
@@ -295,6 +328,22 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
         }
         unlistenExit = offExit;
 
+        // Subscribe to agent-adapter events (only ever emitted for nodes launched via
+        // launch_agent_session — a plain interactive terminal simply never sees any).
+        const offAgentEvent = await listen<{ node_id: string; event: AgentEvent }>(
+          "agent-event",
+          (event) => {
+            if (event.payload.node_id === id) {
+              useAgentSessionStore.getState().setEvent(id, event.payload.event);
+            }
+          }
+        );
+        if (cancelled) {
+          offAgentEvent();
+          return;
+        }
+        unlistenAgentEvent = offAgentEvent;
+
         // Spawn interactive shell. Uses fixed defaults rather than reading a live xterm's
         // size, since a quiet-by-default (e.g. pipeline) terminal may never have one; a live
         // xterm mounting later corrects the size via resize_pty once it fits itself.
@@ -318,6 +367,8 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
       ptyReadyRef.current = false;
       if (unlistenOutput) unlistenOutput();
       if (unlistenExit) unlistenExit();
+      if (unlistenAgentEvent) unlistenAgentEvent();
+      useAgentSessionStore.getState().clearEvent(id);
       invoke("destroy_pty", { nodeId: id }).catch(console.error);
     };
   }, [id, updateNodeData]);
@@ -748,6 +799,16 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
             <span className={`w-1.5 h-1.5 rounded-full ${statusColor}`} />
             <span className="text-[8px] font-mono text-slate-500 uppercase">{statusText}</span>
           </div>
+          {/* Agent Badge - only present once a launch_agent_session call has produced at
+              least one event for this node; plain interactive terminals never show it. */}
+          {agentEvent && (
+            <div className="flex items-center gap-1.5 ml-1 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 shrink-0">
+              <span className={`w-1.5 h-1.5 rounded-full ${agentBadgeColor(agentEvent)}`} />
+              <span className="text-[8px] font-mono text-slate-500 uppercase truncate max-w-[120px]">
+                {agentBadgeText(agentEvent)}
+              </span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <button
