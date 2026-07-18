@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { GitBranch, RotateCcw } from "lucide-react";
+import { useCanvasStore } from "../../store/canvasStore";
 
 interface WorktreeInfo {
   nodeId: string;
@@ -21,18 +22,20 @@ function shortSha(sha: string) {
 }
 
 export default function DeploymentsTracker() {
+  const activeProjectId = useCanvasStore((state) => state.activeProjectId);
   const [repoHead, setRepoHead] = useState<RepoHeadInfo | null>(null);
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
   const [rollingBackId, setRollingBackId] = useState<string | null>(null);
 
   const refresh = async () => {
+    if (!activeProjectId) return;
     try {
-      setRepoHead(await invoke<RepoHeadInfo>("get_repo_head"));
+      setRepoHead(await invoke<RepoHeadInfo>("get_repo_head", { projectId: activeProjectId }));
     } catch (err) {
       console.error("Failed to load repo head:", err);
     }
     try {
-      setWorktrees(await invoke<WorktreeInfo[]>("list_active_worktrees"));
+      setWorktrees(await invoke<WorktreeInfo[]>("list_active_worktrees", { projectId: activeProjectId }));
     } catch (err) {
       console.error("Failed to load active worktrees:", err);
     }
@@ -48,12 +51,14 @@ export default function DeploymentsTracker() {
     };
     setup();
     return () => unlistenFns.forEach((fn) => fn());
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
 
   const handleRollback = async (nodeId: string) => {
+    if (!activeProjectId) return;
     setRollingBackId(nodeId);
     try {
-      await invoke("rollback_worktree", { nodeId });
+      await invoke("rollback_worktree", { projectId: activeProjectId, nodeId });
       await refresh();
     } catch (err) {
       console.error("Rollback failed:", err);

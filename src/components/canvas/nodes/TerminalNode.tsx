@@ -417,8 +417,10 @@ export default function TerminalNode({ node }: TerminalNodeProps) {
   // xterm's bracketed-paste-aware paste(), so readline-based CLIs (Claude Code, Gemini CLI,
   // Codex) receive it as one block instead of executing each line as it streams in.
   const handleInjectGitDiff = async () => {
+    const activeProjectId = useCanvasStore.getState().activeProjectId;
+    if (!activeProjectId) return;
     try {
-      const diff = await invoke<string>("get_git_diff");
+      const diff = await invoke<string>("get_git_diff", { projectId: activeProjectId });
       if (!diff.trim()) {
         termInstance.current?.writeln("\r\n\x1b[33m[No pending changes to inject]\x1b[0m");
         return;
