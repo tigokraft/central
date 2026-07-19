@@ -282,7 +282,7 @@ export default function OrchestratorBar() {
       </form>
       {statusMessage && (
         <span
-          className="hidden xl:inline text-[10px] text-amber-400 truncate max-w-[260px] shrink-0"
+          className="hidden md:inline text-[10px] text-amber-400 truncate max-w-[200px] shrink-0"
           title={statusMessage}
         >
           {statusMessage}
