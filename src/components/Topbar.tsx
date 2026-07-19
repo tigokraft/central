@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Play, ZoomIn, ZoomOut, Maximize, Map, KeyRound, ArrowLeft } from "lucide-react";
+import { Play, ZoomIn, ZoomOut, Maximize, Map, KeyRound, Bot, ArrowLeft } from "lucide-react";
 import { useCanvasStore } from "../store/canvasStore";
 import { useAppViewStore } from "../store/appViewStore";
 import ProviderSettingsModal from "./ProviderSettingsModal";
+import OrchestratorProfilesModal from "./OrchestratorProfilesModal";
 import Button from "./ui/Button";
 
 interface TopbarProps {
@@ -17,6 +18,7 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
   const runPipeline = useCanvasStore((state) => state.runPipeline);
   const goHome = useAppViewStore((state) => state.goHome);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
+  const [showOrchestratorProfiles, setShowOrchestratorProfiles] = useState(false);
 
   const resetView = () => {
     zoomToFit(selectedNodeIds.length > 0 ? selectedNodeIds : undefined);
@@ -81,6 +83,16 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
           Minimap
         </button>
 
+        {/* Orchestrator Profiles */}
+        <button
+          onClick={() => setShowOrchestratorProfiles(true)}
+          title="Orchestrator Profiles"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer"
+        >
+          <Bot size={13} />
+          Orchestrator
+        </button>
+
         {/* Provider Settings (BYOK) */}
         <button
           onClick={() => setShowProviderSettings(true)}
@@ -93,6 +105,9 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
       </div>
 
       {showProviderSettings && <ProviderSettingsModal onClose={() => setShowProviderSettings(false)} />}
+      {showOrchestratorProfiles && (
+        <OrchestratorProfilesModal onClose={() => setShowOrchestratorProfiles(false)} />
+      )}
     </div>
   );
 }
