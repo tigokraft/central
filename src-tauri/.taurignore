@@ -1,0 +1,4 @@
+# Tauri's own build.rs (tauri_build::build()) rewrites this directory's schema files on every
+# cargo build. It's already gitignored (see .gitignore) but the dev-mode file watcher doesn't
+# read .gitignore, so without this it watches its own generated output and rebuilds forever.
+/gen
