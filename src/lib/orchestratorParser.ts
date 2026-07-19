@@ -32,7 +32,7 @@ function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function titleCase(text: string): string {
+export function titleCase(text: string): string {
   const trimmed = text.trim();
   if (trimmed.length <= 48) return trimmed;
   return `${trimmed.slice(0, 45)}...`;

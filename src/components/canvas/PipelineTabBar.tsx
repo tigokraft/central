@@ -23,6 +23,7 @@ interface PipelineTabBarProps {
 // which also resets undo history so it can't cross pipelines.
 export default function PipelineTabBar({ projectId }: PipelineTabBarProps) {
   const activePipelineId = useCanvasStore((state) => state.activePipelineId);
+  const pipelineListVersion = useCanvasStore((state) => state.pipelineListVersion);
   const [pipelines, setPipelines] = useState<PipelineMeta[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
@@ -33,7 +34,7 @@ export default function PipelineTabBar({ projectId }: PipelineTabBarProps) {
   useEffect(() => {
     void refreshPipelines();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, pipelineListVersion]);
 
   useEffect(() => {
     if (editingId) editInputRef.current?.select();

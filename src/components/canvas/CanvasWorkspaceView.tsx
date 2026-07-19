@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Topbar from "../Topbar";
 import Sidebar from "../Sidebar";
 import InfiniteCanvas from "./InfiniteCanvas";
@@ -7,12 +7,19 @@ import PipelineTabBar from "./PipelineTabBar";
 import EditorPanel from "../editor/EditorPanel";
 import { useCanvasStore } from "../../store/canvasStore";
 import { useEditorStore } from "../../store/editorStore";
+import { useOrchestratorProfileStore } from "../../store/orchestratorProfileStore";
 
 export default function CanvasWorkspaceView() {
   const nodes = useCanvasStore((state) => state.nodes);
   const activeProjectId = useCanvasStore((state) => state.activeProjectId);
   const hasOpenFiles = useEditorStore((state) => state.order.length > 0);
   const [showMinimap, setShowMinimap] = useState(false);
+
+  // Seeds the one-time default orchestrator profile (no-ops once a profile already exists, or
+  // once seeding has already happened — see hasSeededDefault in orchestratorProfileStore).
+  useEffect(() => {
+    void useOrchestratorProfileStore.getState().ensureDefaultProfile();
+  }, []);
 
   // Sync active processes with Sidebar monitor
   const activeProcesses = nodes
