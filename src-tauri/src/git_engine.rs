@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use git2::{IndexAddOption, Oid, Repository, ResetType, Signature, Status, StatusOptions};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Serialize, Clone)]
@@ -57,6 +57,36 @@ struct WorktreeHandle {
     base_commit: String,
 }
 
+/// How a workbench session's terminal is bound to git: run directly against the main
+/// workspace, or in an isolated worktree checked out to an existing or brand-new branch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WorkbenchBinding {
+    Main,
+    Existing { branch: String },
+    New { branch: String },
+}
+
+// Set only for Existing/New bindings; None (and no worktree_name) for Main, which runs
+// directly in the workspace with no sandbox to clean up.
+struct WorkbenchBindingHandle {
+    path: PathBuf,
+    branch_name: Option<String>,
+    // Whether this binding created its branch (New) and therefore owns its lifecycle, vs.
+    // merely checking out a branch the user already had (Existing) that must survive Discard.
+    owns_branch: bool,
+    worktree_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PromoteResult {
+    pub branch: String,
+    pub merge_commit_sha: Option<String>,
+    pub fast_forward: bool,
+    pub up_to_date: bool,
+}
+
 // Worktrees are keyed by (project_id, node_id) rather than just node_id, so two projects
 // running pipelines concurrently (or reusing the same node id across separate canvases) never
 // share or clobber each other's sandbox state.
@@ -65,6 +95,10 @@ type WorktreeKey = (String, String);
 #[derive(Default)]
 pub struct GitEngineState {
     worktrees: Mutex<HashMap<WorktreeKey, WorktreeHandle>>,
+    // Keyed by (project_id, session_id) — a workbench session's git binding, separate from
+    // the ephemeral pipeline-node worktrees map above since sessions are long-lived and
+    // persisted across app restarts rather than pruned at the start of every run.
+    bindings: Mutex<HashMap<WorktreeKey, WorkbenchBindingHandle>>,
 }
 
 const CENTRAL_GITIGNORE_ENTRY: &str = ".central/";
@@ -130,6 +164,28 @@ fn prune_worktree(repo: &Repository, handle: &WorktreeHandle) {
     let _ = std::fs::remove_dir_all(&handle.path);
     if let Ok(mut branch) = repo.find_branch(&handle.worktree_name, git2::BranchType::Local) {
         let _ = branch.delete();
+    }
+}
+
+// Like `prune_worktree` but for a workbench session's binding, where the branch to delete
+// (if any) is independent of the worktree's own name and may be intentionally left alone
+// (an Existing-branch binding must survive Discard; only a New binding owns its branch).
+fn prune_workbench_worktree(
+    repo: &Repository,
+    worktree_name: &str,
+    path: &Path,
+    branch_to_delete: Option<&str>,
+) {
+    if let Ok(wt) = repo.find_worktree(worktree_name) {
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.working_tree(true);
+        let _ = wt.prune(Some(&mut opts));
+    }
+    let _ = std::fs::remove_dir_all(path);
+    if let Some(branch_name) = branch_to_delete {
+        if let Ok(mut branch) = repo.find_branch(branch_name, git2::BranchType::Local) {
+            let _ = branch.delete();
+        }
     }
 }
 
@@ -342,6 +398,336 @@ impl GitEngineState {
 
         Ok(())
     }
+
+    /// Resolves (creating if needed) the working directory a workbench session's terminal
+    /// should run in for the given binding. Idempotent across app restarts: a Main binding
+    /// always resolves to the workspace root, and an Existing/New binding reuses whatever
+    /// worktree already exists on disk at `<repo_root>/.central/workbench/<session_id>`
+    /// rather than recreating it, since the on-disk worktree (and its underlying git metadata)
+    /// outlives this in-memory map across process restarts.
+    pub fn ensure_workbench_binding(
+        &self,
+        project_id: &str,
+        repo_root: &Path,
+        session_id: &str,
+        binding: &WorkbenchBinding,
+    ) -> Result<PathBuf, String> {
+        let key = (project_id.to_string(), session_id.to_string());
+
+        if matches!(binding, WorkbenchBinding::Main) {
+            let mut bindings = self.bindings.lock().unwrap();
+            bindings.insert(
+                key,
+                WorkbenchBindingHandle {
+                    path: repo_root.to_path_buf(),
+                    branch_name: None,
+                    owns_branch: false,
+                    worktree_name: None,
+                },
+            );
+            return Ok(repo_root.to_path_buf());
+        }
+
+        let (branch_name, owns_branch) = match binding {
+            WorkbenchBinding::Existing { branch } => (branch.clone(), false),
+            WorkbenchBinding::New { branch } => (branch.clone(), true),
+            WorkbenchBinding::Main => unreachable!("handled above"),
+        };
+
+        let worktree_name = sanitize(session_id);
+        let wt_path = repo_root
+            .join(".central")
+            .join("workbench")
+            .join(&worktree_name);
+
+        // Already bound and still present on disk (e.g. a session restored after an app
+        // restart) — nothing left to do.
+        if wt_path.exists() {
+            let mut bindings = self.bindings.lock().unwrap();
+            bindings.insert(
+                key,
+                WorkbenchBindingHandle {
+                    path: wt_path.clone(),
+                    branch_name: Some(branch_name),
+                    owns_branch,
+                    worktree_name: Some(worktree_name),
+                },
+            );
+            return Ok(wt_path);
+        }
+
+        let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+        ensure_central_gitignored(repo_root);
+
+        if let Some(parent) = wt_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        if owns_branch {
+            let head_commit = repo
+                .head()
+                .and_then(|h| h.peel_to_commit())
+                .map_err(|e| e.to_string())?;
+            repo.branch(&branch_name, &head_commit, false)
+                .map_err(|e| e.to_string())?;
+        }
+
+        let branch_ref = repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .map_err(|e| e.to_string())?
+            .into_reference();
+        let mut wt_opts = git2::WorktreeAddOptions::new();
+        wt_opts.reference(Some(&branch_ref));
+        repo.worktree(&worktree_name, &wt_path, Some(&wt_opts))
+            .map_err(|e| e.to_string())?;
+
+        let mut bindings = self.bindings.lock().unwrap();
+        bindings.insert(
+            key,
+            WorkbenchBindingHandle {
+                path: wt_path.clone(),
+                branch_name: Some(branch_name),
+                owns_branch,
+                worktree_name: Some(worktree_name),
+            },
+        );
+        Ok(wt_path)
+    }
+
+    /// Merges a workbench session's bound branch into the main workspace's currently checked
+    /// out branch (HEAD). Fast-forwards when possible; otherwise creates a merge commit. On
+    /// conflict, aborts cleanly (resets the workspace back to HEAD, no partial merge state
+    /// left behind) and returns an error rather than attempting any auto-resolution.
+    pub fn promote_session(
+        &self,
+        project_id: &str,
+        repo_root: &Path,
+        session_id: &str,
+    ) -> Result<PromoteResult, String> {
+        let branch_name = {
+            let bindings = self.bindings.lock().unwrap();
+            bindings
+                .get(&(project_id.to_string(), session_id.to_string()))
+                .and_then(|h| h.branch_name.clone())
+                .ok_or_else(|| "Session has no branch to promote".to_string())?
+        };
+
+        let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+        let branch_commit = repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .and_then(|b| b.get().peel_to_commit())
+            .map_err(|e| e.to_string())?;
+        let annotated = repo
+            .find_annotated_commit(branch_commit.id())
+            .map_err(|e| e.to_string())?;
+
+        let (analysis, _) = repo
+            .merge_analysis(&[&annotated])
+            .map_err(|e| e.to_string())?;
+
+        if analysis.is_up_to_date() {
+            return Ok(PromoteResult {
+                branch: branch_name,
+                merge_commit_sha: None,
+                fast_forward: false,
+                up_to_date: true,
+            });
+        }
+
+        if analysis.is_fast_forward() {
+            let mut head_ref = repo.head().map_err(|e| e.to_string())?;
+            let refname = head_ref
+                .name()
+                .ok_or("Cannot fast-forward a detached HEAD")?
+                .to_string();
+            head_ref
+                .set_target(branch_commit.id(), "workbench promote: fast-forward")
+                .map_err(|e| e.to_string())?;
+            repo.set_head(&refname).map_err(|e| e.to_string())?;
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+                .map_err(|e| e.to_string())?;
+            return Ok(PromoteResult {
+                branch: branch_name,
+                merge_commit_sha: Some(branch_commit.id().to_string()),
+                fast_forward: true,
+                up_to_date: false,
+            });
+        }
+
+        repo.merge(&[&annotated], None, None)
+            .map_err(|e| e.to_string())?;
+
+        let mut index = repo.index().map_err(|e| e.to_string())?;
+        if index.has_conflicts() {
+            let head_commit = repo
+                .head()
+                .and_then(|h| h.peel_to_commit())
+                .map_err(|e| e.to_string())?;
+            let _ = repo.cleanup_state();
+            repo.reset(head_commit.as_object(), ResetType::Hard, None)
+                .map_err(|e| e.to_string())?;
+            return Err(format!(
+                "Merge conflict promoting '{}': resolve manually and retry",
+                branch_name
+            ));
+        }
+
+        let tree_oid = index.write_tree().map_err(|e| e.to_string())?;
+        let tree = repo.find_tree(tree_oid).map_err(|e| e.to_string())?;
+        let sig = repo
+            .signature()
+            .or_else(|_| Signature::now("Central", "central@local"))
+            .map_err(|e| e.to_string())?;
+        let head_commit = repo
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map_err(|e| e.to_string())?;
+        let message = format!("Merge branch '{}' into workbench session", branch_name);
+        let commit_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                &message,
+                &tree,
+                &[&head_commit, &branch_commit],
+            )
+            .map_err(|e| e.to_string())?;
+        repo.cleanup_state().map_err(|e| e.to_string())?;
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .map_err(|e| e.to_string())?;
+
+        Ok(PromoteResult {
+            branch: branch_name,
+            merge_commit_sha: Some(commit_oid.to_string()),
+            fast_forward: false,
+            up_to_date: false,
+        })
+    }
+
+    /// Tears down a workbench session's git binding: prunes its worktree (Main bindings have
+    /// none, so this is a no-op for them) and deletes the branch only if this binding created
+    /// it (New) — an Existing-branch binding must leave the user's pre-existing branch intact.
+    pub fn discard_workbench_binding(
+        &self,
+        project_id: &str,
+        repo_root: &Path,
+        session_id: &str,
+    ) -> Result<(), String> {
+        let handle = {
+            let mut bindings = self.bindings.lock().unwrap();
+            bindings.remove(&(project_id.to_string(), session_id.to_string()))
+        };
+        let Some(handle) = handle else { return Ok(()) };
+        let Some(worktree_name) = handle.worktree_name else {
+            return Ok(());
+        };
+
+        let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+        let branch_to_delete = if handle.owns_branch {
+            handle.branch_name.as_deref()
+        } else {
+            None
+        };
+        prune_workbench_worktree(&repo, &worktree_name, &handle.path, branch_to_delete);
+        Ok(())
+    }
+}
+
+fn list_branches_at(repo_root: &Path) -> Result<Vec<String>, String> {
+    let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+    let mut names = Vec::new();
+    for entry in repo
+        .branches(Some(git2::BranchType::Local))
+        .map_err(|e| e.to_string())?
+    {
+        let (branch, _) = entry.map_err(|e| e.to_string())?;
+        if let Some(name) = branch.name().map_err(|e| e.to_string())? {
+            names.push(name.to_string());
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn branch_diff_at(repo_root: &Path, branch: &str) -> Result<String, String> {
+    let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+    let head_tree = repo
+        .head()
+        .and_then(|h| h.peel_to_tree())
+        .map_err(|e| e.to_string())?;
+    let branch_tree = repo
+        .find_branch(branch, git2::BranchType::Local)
+        .and_then(|b| b.get().peel_to_tree())
+        .map_err(|e| e.to_string())?;
+
+    let diff = repo
+        .diff_tree_to_tree(Some(&head_tree), Some(&branch_tree), None)
+        .map_err(|e| e.to_string())?;
+
+    let mut patch = String::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        if matches!(line.origin(), '+' | '-' | ' ') {
+            patch.push(line.origin());
+        }
+        patch.push_str(&String::from_utf8_lossy(line.content()));
+        true
+    })
+    .map_err(|e| e.to_string())?;
+
+    Ok(patch)
+}
+
+#[tauri::command]
+pub fn list_branches(project_id: String, app: AppHandle) -> Result<Vec<String>, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    list_branches_at(&workspace)
+}
+
+#[tauri::command]
+pub fn get_branch_diff(
+    project_id: String,
+    branch: String,
+    app: AppHandle,
+) -> Result<String, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    branch_diff_at(&workspace, &branch)
+}
+
+#[tauri::command]
+pub fn bind_workbench_session(
+    project_id: String,
+    session_id: String,
+    binding: WorkbenchBinding,
+    app: AppHandle,
+    state: State<'_, GitEngineState>,
+) -> Result<String, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    state
+        .ensure_workbench_binding(&project_id, &workspace, &session_id, &binding)
+        .map(|p| p.display().to_string())
+}
+
+#[tauri::command]
+pub fn promote_workbench_session(
+    project_id: String,
+    session_id: String,
+    app: AppHandle,
+    state: State<'_, GitEngineState>,
+) -> Result<PromoteResult, String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    state.promote_session(&project_id, &workspace, &session_id)
+}
+
+#[tauri::command]
+pub fn discard_workbench_session(
+    project_id: String,
+    session_id: String,
+    app: AppHandle,
+    state: State<'_, GitEngineState>,
+) -> Result<(), String> {
+    let workspace = crate::project::resolve_project_workspace(&app, &project_id)?;
+    state.discard_workbench_binding(&project_id, &workspace, &session_id)
 }
 
 #[tauri::command]
@@ -975,6 +1361,438 @@ mod tests {
         std::fs::write(repo_root.join("new.txt"), "new\n").unwrap();
         let content = file_at_head(&repo_root, "new.txt").unwrap();
         assert_eq!(content, None);
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn ensure_workbench_binding_main_resolves_to_repo_root() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+
+        let path = state
+            .ensure_workbench_binding("proj-a", &repo_root, "sess-1", &WorkbenchBinding::Main)
+            .unwrap();
+
+        assert_eq!(path, repo_root);
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn ensure_workbench_binding_new_creates_worktree_and_branch() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+
+        let path = state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::New {
+                    branch: "feature-x".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert!(path.exists());
+        assert_ne!(path, repo_root);
+        let repo = Repository::open(&repo_root).unwrap();
+        assert!(repo
+            .find_branch("feature-x", git2::BranchType::Local)
+            .is_ok());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn ensure_workbench_binding_existing_checks_out_current_branch() {
+        let repo_root = init_test_repo();
+        let repo = Repository::open(&repo_root).unwrap();
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("already-here", &head_commit, false).unwrap();
+        let state = GitEngineState::default();
+
+        let path = state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::Existing {
+                    branch: "already-here".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert!(path.exists());
+        let wt_repo = Repository::open(&path).unwrap();
+        assert_eq!(wt_repo.head().unwrap().shorthand(), Some("already-here"));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn ensure_workbench_binding_reuses_worktree_across_a_fresh_state_restart() {
+        let repo_root = init_test_repo();
+        let first_state = GitEngineState::default();
+        let binding = WorkbenchBinding::New {
+            branch: "restart-branch".to_string(),
+        };
+        let first_path = first_state
+            .ensure_workbench_binding("proj-a", &repo_root, "sess-1", &binding)
+            .unwrap();
+
+        // Simulate an app restart: a brand new GitEngineState with an empty in-memory map,
+        // but the worktree directory from before still exists on disk.
+        let second_state = GitEngineState::default();
+        let second_path = second_state
+            .ensure_workbench_binding("proj-a", &repo_root, "sess-1", &binding)
+            .unwrap();
+
+        assert_eq!(first_path, second_path);
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn list_branches_at_returns_sorted_local_branch_names() {
+        let repo_root = init_test_repo();
+        let repo = Repository::open(&repo_root).unwrap();
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("zeta", &head_commit, false).unwrap();
+        repo.branch("alpha", &head_commit, false).unwrap();
+
+        // Don't assume a specific default branch name (git config-dependent) — just check
+        // the two branches we created are present, correctly sorted around it.
+        let branches = list_branches_at(&repo_root).unwrap();
+        assert!(branches.windows(2).all(|w| w[0] <= w[1]));
+        assert!(branches.contains(&"alpha".to_string()));
+        assert!(branches.contains(&"zeta".to_string()));
+        assert_eq!(branches.len(), 3);
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn branch_diff_at_renders_patch_against_head() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        let wt_path = state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::New {
+                    branch: "diffable".to_string(),
+                },
+            )
+            .unwrap();
+        std::fs::write(wt_path.join("new.txt"), "hello\n").unwrap();
+        let wt_repo = Repository::open(&wt_path).unwrap();
+        let mut index = wt_repo.index().unwrap();
+        index.add_path(Path::new("new.txt")).unwrap();
+        index.write().unwrap();
+        let tree = wt_repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let parent = wt_repo.head().unwrap().peel_to_commit().unwrap();
+        wt_repo
+            .commit(Some("HEAD"), &sig, &sig, "add file", &tree, &[&parent])
+            .unwrap();
+
+        let diff = branch_diff_at(&repo_root, "diffable").unwrap();
+        assert!(diff.contains("new.txt"));
+        assert!(diff.contains("+hello"));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn promote_session_fast_forwards_when_main_has_no_new_commits() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        let wt_path = state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::New {
+                    branch: "ff-branch".to_string(),
+                },
+            )
+            .unwrap();
+        std::fs::write(wt_path.join("added.txt"), "x\n").unwrap();
+        let wt_repo = Repository::open(&wt_path).unwrap();
+        let mut index = wt_repo.index().unwrap();
+        index.add_path(Path::new("added.txt")).unwrap();
+        index.write().unwrap();
+        let tree = wt_repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let parent = wt_repo.head().unwrap().peel_to_commit().unwrap();
+        wt_repo
+            .commit(Some("HEAD"), &sig, &sig, "add file", &tree, &[&parent])
+            .unwrap();
+
+        let result = state
+            .promote_session("proj-a", &repo_root, "sess-1")
+            .unwrap();
+        assert!(result.fast_forward);
+        assert!(!result.up_to_date);
+        assert!(result.merge_commit_sha.is_some());
+        assert!(repo_root.join("added.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn promote_session_reports_up_to_date_when_branch_has_no_new_commits() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::New {
+                    branch: "empty-branch".to_string(),
+                },
+            )
+            .unwrap();
+
+        let result = state
+            .promote_session("proj-a", &repo_root, "sess-1")
+            .unwrap();
+        assert!(result.up_to_date);
+        assert!(!result.fast_forward);
+        assert!(result.merge_commit_sha.is_none());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn promote_session_creates_merge_commit_when_main_has_diverged() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        let wt_path = state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::New {
+                    branch: "diverged".to_string(),
+                },
+            )
+            .unwrap();
+
+        // Session branch adds its own file.
+        std::fs::write(wt_path.join("from-session.txt"), "s\n").unwrap();
+        let wt_repo = Repository::open(&wt_path).unwrap();
+        let mut wt_index = wt_repo.index().unwrap();
+        wt_index.add_path(Path::new("from-session.txt")).unwrap();
+        wt_index.write().unwrap();
+        let wt_tree = wt_repo.find_tree(wt_index.write_tree().unwrap()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let wt_parent = wt_repo.head().unwrap().peel_to_commit().unwrap();
+        wt_repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "session commit",
+                &wt_tree,
+                &[&wt_parent],
+            )
+            .unwrap();
+
+        // Main workspace independently gains its own, non-conflicting commit.
+        std::fs::write(repo_root.join("from-main.txt"), "m\n").unwrap();
+        let main_repo = Repository::open(&repo_root).unwrap();
+        let mut main_index = main_repo.index().unwrap();
+        main_index.add_path(Path::new("from-main.txt")).unwrap();
+        main_index.write().unwrap();
+        let main_tree = main_repo
+            .find_tree(main_index.write_tree().unwrap())
+            .unwrap();
+        let main_parent = main_repo.head().unwrap().peel_to_commit().unwrap();
+        main_repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "main commit",
+                &main_tree,
+                &[&main_parent],
+            )
+            .unwrap();
+
+        let result = state
+            .promote_session("proj-a", &repo_root, "sess-1")
+            .unwrap();
+        assert!(!result.fast_forward);
+        assert!(!result.up_to_date);
+        assert!(result.merge_commit_sha.is_some());
+        assert!(repo_root.join("from-session.txt").exists());
+        assert!(repo_root.join("from-main.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn promote_session_aborts_cleanly_on_conflict() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        let wt_path = state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::New {
+                    branch: "conflicting".to_string(),
+                },
+            )
+            .unwrap();
+
+        // Session branch changes README.md.
+        std::fs::write(wt_path.join("README.md"), "from session\n").unwrap();
+        let wt_repo = Repository::open(&wt_path).unwrap();
+        let mut wt_index = wt_repo.index().unwrap();
+        wt_index.add_path(Path::new("README.md")).unwrap();
+        wt_index.write().unwrap();
+        let wt_tree = wt_repo.find_tree(wt_index.write_tree().unwrap()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let wt_parent = wt_repo.head().unwrap().peel_to_commit().unwrap();
+        wt_repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "session edit",
+                &wt_tree,
+                &[&wt_parent],
+            )
+            .unwrap();
+
+        // Main workspace changes the very same file differently.
+        std::fs::write(repo_root.join("README.md"), "from main\n").unwrap();
+        let main_repo = Repository::open(&repo_root).unwrap();
+        let mut main_index = main_repo.index().unwrap();
+        main_index.add_path(Path::new("README.md")).unwrap();
+        main_index.write().unwrap();
+        let main_tree = main_repo
+            .find_tree(main_index.write_tree().unwrap())
+            .unwrap();
+        let main_parent = main_repo.head().unwrap().peel_to_commit().unwrap();
+        main_repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "main edit",
+                &main_tree,
+                &[&main_parent],
+            )
+            .unwrap();
+
+        let result = state.promote_session("proj-a", &repo_root, "sess-1");
+        assert!(result.is_err());
+
+        // Workspace must be left clean, back at its own HEAD content, not mid-conflict.
+        let content = std::fs::read_to_string(repo_root.join("README.md")).unwrap();
+        assert_eq!(content, "from main\n");
+        // The workspace must be left clean relative to tracked content — no lingering merge
+        // conflict markers or partial state. `.gitignore` shows up untracked because binding
+        // the session's worktree wrote it out (same as ensure_worktree elsewhere) without
+        // committing it, which is expected and unrelated to the aborted merge.
+        let status = git_status_for(&repo_root).unwrap();
+        assert!(status.iter().all(|entry| entry.path == ".gitignore"));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn promote_session_errors_for_main_binding_with_no_branch() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state
+            .ensure_workbench_binding("proj-a", &repo_root, "sess-1", &WorkbenchBinding::Main)
+            .unwrap();
+
+        let result = state.promote_session("proj-a", &repo_root, "sess-1");
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn discard_workbench_binding_deletes_new_branch() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        let wt_path = state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::New {
+                    branch: "throwaway".to_string(),
+                },
+            )
+            .unwrap();
+        assert!(wt_path.exists());
+
+        state
+            .discard_workbench_binding("proj-a", &repo_root, "sess-1")
+            .unwrap();
+
+        assert!(!wt_path.exists());
+        let repo = Repository::open(&repo_root).unwrap();
+        assert!(repo
+            .find_branch("throwaway", git2::BranchType::Local)
+            .is_err());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn discard_workbench_binding_keeps_existing_branch() {
+        let repo_root = init_test_repo();
+        let repo = Repository::open(&repo_root).unwrap();
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("keep-me", &head_commit, false).unwrap();
+        let state = GitEngineState::default();
+        let wt_path = state
+            .ensure_workbench_binding(
+                "proj-a",
+                &repo_root,
+                "sess-1",
+                &WorkbenchBinding::Existing {
+                    branch: "keep-me".to_string(),
+                },
+            )
+            .unwrap();
+        assert!(wt_path.exists());
+
+        state
+            .discard_workbench_binding("proj-a", &repo_root, "sess-1")
+            .unwrap();
+
+        assert!(!wt_path.exists());
+        let repo = Repository::open(&repo_root).unwrap();
+        assert!(repo.find_branch("keep-me", git2::BranchType::Local).is_ok());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn discard_workbench_binding_is_noop_for_main_and_unknown_session() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state
+            .ensure_workbench_binding("proj-a", &repo_root, "sess-1", &WorkbenchBinding::Main)
+            .unwrap();
+
+        assert!(state
+            .discard_workbench_binding("proj-a", &repo_root, "sess-1")
+            .is_ok());
+        assert!(state
+            .discard_workbench_binding("proj-a", &repo_root, "ghost-session")
+            .is_ok());
+
         let _ = std::fs::remove_dir_all(&repo_root);
     }
 }
