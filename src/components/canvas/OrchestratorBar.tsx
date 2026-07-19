@@ -126,6 +126,8 @@ async function runLlmFlow(
     optionsPayload,
     cwd
   );
+  console.info("[orchestrator] planner output:", plannerResult.text);
+
   if (!plannerResult.text.trim()) {
     applyPlanToCurrentPipeline(regexPlan);
     return "Planner returned no output; used the offline parser instead.";
@@ -136,14 +138,17 @@ async function runLlmFlow(
 
   let decomposerResult = await runAgentHeadless(profile.adapterId, decomposerPrompt(), optionsPayload, cwd);
   let parsed = parseTaskListJson(decomposerResult.text);
+  console.info("[orchestrator] decomposer attempt 1 output:", decomposerResult.text, "parsed:", parsed);
 
   if (!parsed.ok) {
     const retryExtra = `Your previous response failed to parse: ${parsed.error}\n\nRespond with ONLY the corrected JSON array, no prose, no code fences.`;
     decomposerResult = await runAgentHeadless(profile.adapterId, decomposerPrompt(retryExtra), optionsPayload, cwd);
     parsed = parseTaskListJson(decomposerResult.text);
+    console.info("[orchestrator] decomposer attempt 2 output:", decomposerResult.text, "parsed:", parsed);
   }
 
   if (!parsed.ok) {
+    console.error("[orchestrator] decomposer gave up after retry:", parsed.error);
     applyPlanToCurrentPipeline(regexPlan);
     return `Decomposer failed to produce a valid task list (${parsed.error}); used the offline parser instead.`;
   }
