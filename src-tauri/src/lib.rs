@@ -68,6 +68,7 @@ pub fn run() {
             agents::list_available_agents,
             agents::launch_agent_session,
             agents::send_agent_input,
+            agents::build_task_command_line,
             memory::engine::create_memory_record,
             memory::engine::query_memory_graph,
             memory::engine::list_aimem_facts,
