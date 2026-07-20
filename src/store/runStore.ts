@@ -46,6 +46,12 @@ interface RunState {
   runOrder: string[];
   activeRunId: string | null;
   listenerStarted: boolean;
+  // Events for a runId this store doesn't know about yet, keyed by that runId. The backend
+  // spawns its dispatcher (which starts emitting taskState events immediately) before
+  // start_orchestration_run's own IPC reply necessarily reaches this store's `runs` map, so an
+  // event can arrive before startRun has registered the run it belongs to. Buffered here instead
+  // of dropped, then replayed once startRun creates the run entry.
+  pendingEvents: Record<string, OrchestrationEventPayload["event"][]>;
   ensureListener: () => void;
   startRun: (opts: StartRunOptions) => Promise<string>;
   confirmPromotion: (runId: string) => Promise<void>;
@@ -90,6 +96,7 @@ export const useRunStore = create<RunState>((set, get) => ({
   runOrder: [],
   activeRunId: null,
   listenerStarted: false,
+  pendingEvents: {},
 
   ensureListener: () => {
     if (get().listenerStarted) return;
@@ -98,7 +105,10 @@ export const useRunStore = create<RunState>((set, get) => ({
       const { runId, event } = e.payload;
       set((state) => {
         const run = state.runs[runId];
-        if (!run) return state;
+        if (!run) {
+          const buffered = state.pendingEvents[runId] ?? [];
+          return { pendingEvents: { ...state.pendingEvents, [runId]: [...buffered, event] } };
+        }
         return { runs: { ...state.runs, [runId]: applyEvent(run, event) } };
       });
     }).catch((err) => console.error("Failed to listen for orchestration events:", err));
@@ -133,11 +143,17 @@ export const useRunStore = create<RunState>((set, get) => ({
       summary: null,
       error: null,
     };
-    set((state) => ({
-      runs: { ...state.runs, [runId]: run },
-      runOrder: [runId, ...state.runOrder],
-      activeRunId: runId,
-    }));
+    set((state) => {
+      const buffered = state.pendingEvents[runId] ?? [];
+      const hydratedRun = buffered.reduce(applyEvent, run);
+      const { [runId]: _replayed, ...remainingPending } = state.pendingEvents;
+      return {
+        runs: { ...state.runs, [runId]: hydratedRun },
+        runOrder: [runId, ...state.runOrder],
+        activeRunId: runId,
+        pendingEvents: remainingPending,
+      };
+    });
     return runId;
   },
 
