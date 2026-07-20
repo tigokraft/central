@@ -53,12 +53,14 @@ export const PROFILE_TEMPLATES: OrchestratorProfileTemplate[] = [
     label: "Antigravity CLI",
     description:
       "Google's Antigravity CLI (`agy`), the successor to Gemini CLI's individual free tier. " +
-      "-p runs a single non-interactive prompt (confirmed via `agy --help`). Like Claude Code, " +
-      "it won't actually write/edit/run anything unattended without --dangerously-skip-" +
-      "permissions in Extra Args — add that deliberately once you're ready for it to act, not " +
-      "just describe what it would do.",
+      "-p runs a single non-interactive prompt (confirmed via `agy --help`). --add-dir . tells " +
+      "it to actually operate on the working directory it's launched in — without it, agy " +
+      "seems to default to its own internal scratch project instead. Like Claude Code, it " +
+      "won't write/edit/run anything unattended without --dangerously-skip-permissions in " +
+      "Extra Args — add that deliberately once you're ready for it to act, not just describe " +
+      "what it would do.",
     adapterId: "generic-command",
-    launchOptions: blankLaunchOptions(`agy -p ${PROMPT_PLACEHOLDER}`),
+    launchOptions: blankLaunchOptions(`agy -p ${PROMPT_PLACEHOLDER} --add-dir .`),
   },
   {
     id: "codex-cli",
