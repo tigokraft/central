@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Names never surfaced to the file explorer or watched for changes: `.git` is the project's
 /// own repo metadata, `.central` is agent worktree/memory scratch space (see git_engine.rs's
@@ -87,6 +87,21 @@ fn resolve_within_workspace(root_canonical: &Path, relative: &str) -> Result<Pat
 fn canonical_workspace_root(app: &AppHandle, project_id: &str) -> Result<PathBuf, String> {
     let workspace = crate::project::resolve_project_workspace(app, project_id)?;
     workspace.canonicalize().map_err(|e| e.to_string())
+}
+
+// Same idea as canonical_workspace_root, but rooted at a node's isolated sandbox worktree
+// (see GitEngineState::ensure_worktree) instead of the project's main workspace, so its
+// contents can be browsed read-only without exposing every workspace_fs command against it.
+fn canonical_worktree_root(
+    app: &AppHandle,
+    project_id: &str,
+    node_id: &str,
+) -> Result<PathBuf, String> {
+    let git_state = app.state::<crate::git_engine::GitEngineState>();
+    let path = git_state
+        .worktree_path(project_id, node_id)
+        .ok_or_else(|| format!("No active worktree for node '{node_id}'"))?;
+    path.canonicalize().map_err(|e| e.to_string())
 }
 
 // --- Pure, AppHandle-free helpers (unit-testable against a tempdir root) ---
@@ -202,6 +217,36 @@ pub fn list_dir(project_id: String, path: String, app: AppHandle) -> Result<Vec<
 #[tauri::command]
 pub fn read_file(project_id: String, path: String, app: AppHandle) -> Result<String, String> {
     read_file_at(&canonical_workspace_root(&app, &project_id)?, &path)
+}
+
+// Read-only counterparts of list_dir/read_file, rooted at a node's isolated sandbox worktree
+// instead of the main workspace — the only way to see what a materialized task's shell command
+// actually produced, since that sandbox is deliberately excluded from the regular file tree
+// (see HIDDEN_ENTRY_NAMES) and never auto-merged into the main branch.
+#[tauri::command]
+pub fn list_worktree_dir(
+    project_id: String,
+    node_id: String,
+    path: String,
+    app: AppHandle,
+) -> Result<Vec<FsEntry>, String> {
+    list_dir_at(
+        &canonical_worktree_root(&app, &project_id, &node_id)?,
+        &path,
+    )
+}
+
+#[tauri::command]
+pub fn read_worktree_file(
+    project_id: String,
+    node_id: String,
+    path: String,
+    app: AppHandle,
+) -> Result<String, String> {
+    read_file_at(
+        &canonical_worktree_root(&app, &project_id, &node_id)?,
+        &path,
+    )
 }
 
 #[tauri::command]
