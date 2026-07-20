@@ -1,15 +1,20 @@
 use super::event::AgentEvent;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
 
 // Adapter-specific launch tuning. Every field is optional since most adapters only care about
 // a subset — ClaudeCode reads `model`/`extra_args`, GenericCommand reads `command_template`.
+// `env` is adapter-agnostic: it's layered onto the spawned child process's environment (and, for
+// materialized task commands, prefixed onto the rendered shell line) regardless of which adapter
+// is in play — e.g. a headless CLI auth token that only the process, not the wider app, needs.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct AgentLaunchOptions {
     pub model: Option<String>,
     pub command_template: Option<String>,
     pub extra_args: Vec<String>,
+    pub env: HashMap<String, String>,
 }
 
 // What to actually spawn (argv, not shell text) plus, optionally, text to write to the

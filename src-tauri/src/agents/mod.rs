@@ -11,6 +11,7 @@ use claude_code::ClaudeCodeAdapter;
 use generic::GenericCommandAdapter;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -109,6 +110,12 @@ pub fn launch_agent_session(
         cmd.arg(arg);
     }
     cmd.cwd(&cwd_path);
+    // Layered on top of the inherited process environment (CommandBuilder starts pre-populated
+    // from it), so a profile-configured var like a headless CLI auth token doesn't require the
+    // user to export anything in the shell that launched the app.
+    for (key, value) in &options.env {
+        cmd.env(key, value);
+    }
 
     // Started is synthesized here (spawn success), not parsed from output, so it fires for
     // every adapter uniformly — GenericCommand's parse_line never derives events from content.
@@ -204,8 +211,22 @@ fn single_quote(s: &str) -> String {
 // `sh -c`-safe command line string, suitable for a materialized actionContainerNode's `actions`
 // entry. Every literal arg is single-quoted; the one arg that carries the prompt (or the
 // stdin-delivered prompt) is instead double-quoted so the shell expands it against whatever
-// CENTRAL_PIPELINE_INPUT holds at execution time.
-pub fn render_launch_as_shell_command(launch: &LaunchSpec) -> String {
+// CENTRAL_PIPELINE_INPUT holds at execution time. `env` is prefixed as POSIX
+// `KEY='value' ...` assignments (sorted for deterministic output) scoped to just this command,
+// so a profile-configured var (e.g. a headless CLI auth token) reaches the process without the
+// user having to export anything in their own shell — graph_runner.rs's `sh -c` execution
+// already supports this syntax with no changes needed there.
+pub fn render_launch_as_shell_command(
+    launch: &LaunchSpec,
+    env: &HashMap<String, String>,
+) -> String {
+    let mut sorted_env: Vec<(&String, &String)> = env.iter().collect();
+    sorted_env.sort_by_key(|(k, _)| k.as_str());
+    let env_prefix: String = sorted_env
+        .iter()
+        .map(|(k, v)| format!("{k}={} ", single_quote(v)))
+        .collect();
+
     let mut parts = vec![single_quote(&launch.program)];
     for arg in &launch.args {
         if arg == PIPELINE_INPUT_SENTINEL {
@@ -216,13 +237,15 @@ pub fn render_launch_as_shell_command(launch: &LaunchSpec) -> String {
     }
     let cmd = parts.join(" ");
 
-    match launch.stdin_prompt.as_deref() {
+    let piped = match launch.stdin_prompt.as_deref() {
         Some(s) if s == PIPELINE_INPUT_SENTINEL => {
             format!("printf '%s' \"{PIPELINE_INPUT_SENTINEL}\" | {cmd}")
         }
         Some(other) => format!("printf '%s' {} | {cmd}", single_quote(other)),
         None => cmd,
-    }
+    };
+
+    format!("{env_prefix}{piped}")
 }
 
 // Renders the given adapter's headless CLI invocation as a shell command line that reads its
@@ -244,7 +267,7 @@ pub fn build_task_command_line(
         PathBuf::from(".").as_path(),
         &options,
     );
-    Ok(render_launch_as_shell_command(&launch))
+    Ok(render_launch_as_shell_command(&launch, &options.env))
 }
 
 #[cfg(test)]
@@ -260,7 +283,7 @@ mod command_line_tests {
             &AgentLaunchOptions::default(),
         );
         assert_eq!(
-            render_launch_as_shell_command(&launch),
+            render_launch_as_shell_command(&launch, &HashMap::new()),
             "'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose'"
         );
     }
@@ -279,8 +302,29 @@ mod command_line_tests {
             &options,
         );
         assert_eq!(
-            render_launch_as_shell_command(&launch),
+            render_launch_as_shell_command(&launch, &HashMap::new()),
             "'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose' '--model' 'sonnet' '--effort' 'high'"
+        );
+    }
+
+    #[test]
+    fn env_vars_are_prefixed_sorted_and_single_quoted() {
+        let adapter = ClaudeCodeAdapter;
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &AgentLaunchOptions::default(),
+        );
+        let env = HashMap::from([
+            (
+                "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                "it's a token".to_string(),
+            ),
+            ("ANTHROPIC_LOG".to_string(), "debug".to_string()),
+        ]);
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &env),
+            "ANTHROPIC_LOG='debug' CLAUDE_CODE_OAUTH_TOKEN='it'\\''s a token' 'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose'"
         );
     }
 
@@ -297,7 +341,7 @@ mod command_line_tests {
             &options,
         );
         assert_eq!(
-            render_launch_as_shell_command(&launch),
+            render_launch_as_shell_command(&launch, &HashMap::new()),
             "printf '%s' \"$CENTRAL_PIPELINE_INPUT\" | 'sh' '-c' 'echo hi; sleep 1'"
         );
     }
@@ -311,7 +355,7 @@ mod command_line_tests {
             &AgentLaunchOptions::default(),
         );
         assert_eq!(
-            render_launch_as_shell_command(&launch),
+            render_launch_as_shell_command(&launch, &HashMap::new()),
             "'sh' '-c' \"$CENTRAL_PIPELINE_INPUT\""
         );
     }

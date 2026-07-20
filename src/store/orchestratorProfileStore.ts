@@ -16,6 +16,10 @@ export interface OrchestratorLaunchOptions {
   commandTemplate: string;
   // Space-separated; split into a string[] only at the Tauri-call boundary.
   extraArgs: string;
+  // One KEY=VALUE pair per line; parsed into a map only at the Tauri-call boundary. Adapter-
+  // agnostic — e.g. a headless CLI's own auth token — layered onto the spawned process's
+  // environment server-side, so it never needs to live in the shell that launched the app.
+  env: string;
 }
 
 export interface OrchestratorProfile {
@@ -34,6 +38,22 @@ export interface AgentLaunchOptionsPayload {
   model?: string;
   command_template?: string;
   extra_args: string[];
+  env: Record<string, string>;
+}
+
+// Parses "KEY=VALUE" lines into a map, skipping blank lines and lines with no "=" or an empty
+// key. Defensive against fields absent from profiles persisted before `env` existed (no schema
+// migration is configured on this store, so older localStorage entries simply lack the key).
+function parseEnvLines(raw: string | undefined): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const line of (raw ?? "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+  }
+  return env;
 }
 
 export function toAgentLaunchOptionsPayload(options: OrchestratorLaunchOptions): AgentLaunchOptionsPayload {
@@ -41,6 +61,7 @@ export function toAgentLaunchOptionsPayload(options: OrchestratorLaunchOptions):
     model: options.model.trim() || undefined,
     command_template: options.commandTemplate.trim() || undefined,
     extra_args: options.extraArgs.trim() ? options.extraArgs.trim().split(/\s+/) : [],
+    env: parseEnvLines(options.env),
   };
 }
 
@@ -152,7 +173,7 @@ export const useOrchestratorProfileStore = create<OrchestratorProfileState>()(
         get().createProfile({
           name: "Default",
           adapterId,
-          launchOptions: { model: "", commandTemplate: "", extraArgs: "" },
+          launchOptions: { model: "", commandTemplate: "", extraArgs: "", env: "" },
           plannerPrompt: DEFAULT_PLANNER_PROMPT,
           decomposerPrompt: DEFAULT_DECOMPOSER_PROMPT,
         });

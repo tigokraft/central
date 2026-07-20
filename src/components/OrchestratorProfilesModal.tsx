@@ -15,7 +15,7 @@ interface OrchestratorProfilesModalProps {
 const BLANK_PROFILE: Omit<OrchestratorProfile, "id"> = {
   name: "New Profile",
   adapterId: "",
-  launchOptions: { model: "", commandTemplate: "", extraArgs: "" },
+  launchOptions: { model: "", commandTemplate: "", extraArgs: "", env: "" },
   plannerPrompt: "",
   decomposerPrompt: "",
 };
@@ -202,6 +202,28 @@ export default function OrchestratorProfilesModal({ onClose }: OrchestratorProfi
                 className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50 font-mono"
               />
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+              Environment Variables
+            </label>
+            <textarea
+              value={selected.launchOptions.env ?? ""}
+              onChange={(e) =>
+                updateProfile(selected.id, {
+                  launchOptions: { ...selected.launchOptions, env: e.target.value },
+                })
+              }
+              placeholder={"CLAUDE_CODE_OAUTH_TOKEN=...\nONE_PER_LINE=..."}
+              rows={2}
+              data-nodrag
+              className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50 font-mono resize-none"
+            />
+            <p className="text-[9px] text-slate-600 leading-relaxed">
+              One KEY=VALUE per line. Only reaches this adapter's own process — never your shell
+              environment. Stored locally on this device, same as Provider Settings.
+            </p>
           </div>
 
           <div className="space-y-1">
