@@ -52,10 +52,11 @@ export const PROFILE_TEMPLATES: OrchestratorProfileTemplate[] = [
     id: "gemini-cli",
     label: "Gemini CLI",
     description:
-      "Google's gemini CLI in one-shot mode. Flag names shift across versions — verify -p " +
-      "still matches `gemini --help` before relying on this.",
+      "Google's gemini CLI in one-shot mode. --skip-trust avoids an interactive folder-trust " +
+      "prompt Gemini can't show when spawned headlessly like this. Flag names shift across " +
+      "versions — verify against `gemini --help` before relying on this.",
     adapterId: "generic-command",
-    launchOptions: blankLaunchOptions(`gemini -p ${PROMPT_PLACEHOLDER}`),
+    launchOptions: blankLaunchOptions(`gemini -p ${PROMPT_PLACEHOLDER} --skip-trust`),
   },
   {
     id: "codex-cli",
