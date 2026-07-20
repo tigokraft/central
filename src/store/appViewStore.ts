@@ -3,10 +3,11 @@ import { startWorkspaceWatcher, stopWorkspaceWatcher } from "../lib/workspaceFs"
 
 export type AppView = "home" | "canvas";
 
-// Which per-project surface is showing once a project is open: the pipeline canvas, or the
-// team workbench (side-by-side agent terminal sessions). Independent of AppView, which just
-// tracks whether a project is open at all.
-export type ProjectView = "canvas" | "workbench";
+// Which per-project surface is showing once a project is open: the pipeline canvas, the team
+// workbench (side-by-side agent terminal sessions), or the orchestrator's multi-agent task runs
+// (dispatcher/integrator live status). Independent of AppView, which just tracks whether a
+// project is open at all.
+export type ProjectView = "canvas" | "workbench" | "runs";
 
 interface AppViewState {
   view: AppView;
