@@ -185,6 +185,7 @@ export default function OrchestratorBar() {
   const activeProjectId = useCanvasStore((state) => state.activeProjectId);
   const profiles = useOrchestratorProfileStore((state) => state.profiles);
   const getActiveProfileId = useOrchestratorProfileStore((state) => state.getActiveProfileId);
+  const setActiveProfileId = useOrchestratorProfileStore((state) => state.setActiveProfileId);
 
   useEffect(() => {
     if (overrideProfileId && profiles.some((p) => p.id === overrideProfileId)) return;
@@ -247,8 +248,12 @@ export default function OrchestratorBar() {
         {profiles.length > 0 && (
           <select
             value={overrideProfileId ?? ""}
-            onChange={(e) => setOverrideProfileId(e.target.value || null)}
-            title="Orchestrator profile for this run"
+            onChange={(e) => {
+              const id = e.target.value || null;
+              setOverrideProfileId(id);
+              if (id && activeProjectId) setActiveProfileId(activeProjectId, id);
+            }}
+            title="Orchestrator profile (persists as this project's default)"
             className="hidden lg:block shrink-0 w-28 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono focus:outline-none focus:border-emerald-500/50 cursor-pointer"
           >
             {profiles.map((profile) => (
