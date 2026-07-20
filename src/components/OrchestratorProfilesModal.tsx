@@ -1,24 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X, Bot, Plus, Copy, Trash2 } from "lucide-react";
-import {
-  useOrchestratorProfileStore,
-  type OrchestratorProfile,
-  type AgentAvailability,
-} from "../store/orchestratorProfileStore";
+import { useOrchestratorProfileStore, type AgentAvailability } from "../store/orchestratorProfileStore";
+import { PROFILE_TEMPLATES, instantiateProfileTemplate } from "../lib/orchestrator/profileTemplates";
 import Modal from "./ui/Modal";
 
 interface OrchestratorProfilesModalProps {
   onClose: () => void;
 }
-
-const BLANK_PROFILE: Omit<OrchestratorProfile, "id"> = {
-  name: "New Profile",
-  adapterId: "",
-  launchOptions: { model: "", commandTemplate: "", extraArgs: "", env: "" },
-  plannerPrompt: "",
-  decomposerPrompt: "",
-};
 
 // Settings UI for orchestrator profiles: full CRUD over the role the orchestrator bar fills a
 // goal through. Deliberately adapter-agnostic — the launch-option fields (model/command
@@ -34,6 +23,7 @@ export default function OrchestratorProfilesModal({ onClose }: OrchestratorProfi
 
   const [agents, setAgents] = useState<AgentAvailability[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(profiles[0]?.id ?? null);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
 
   useEffect(() => {
     invoke<AgentAvailability[]>("list_available_agents")
@@ -46,10 +36,20 @@ export default function OrchestratorProfilesModal({ onClose }: OrchestratorProfi
     setSelectedId(profiles[0]?.id ?? null);
   }, [profiles, selectedId]);
 
+  useEffect(() => {
+    if (!showTemplateMenu) return;
+    const close = () => setShowTemplateMenu(false);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [showTemplateMenu]);
+
   const selected = profiles.find((p) => p.id === selectedId) ?? null;
 
-  const handleCreate = () => {
-    const id = createProfile({ ...BLANK_PROFILE, adapterId: agents[0]?.id ?? "" });
+  const handleCreateFromTemplate = (templateId: string) => {
+    const template = PROFILE_TEMPLATES.find((t) => t.id === templateId);
+    if (!template) return;
+    setShowTemplateMenu(false);
+    const id = createProfile(instantiateProfileTemplate(template));
     setSelectedId(id);
   };
 
@@ -112,14 +112,37 @@ export default function OrchestratorProfilesModal({ onClose }: OrchestratorProfi
             </button>
           </div>
         ))}
-        <button
-          onClick={handleCreate}
-          title="New Profile"
-          className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-slate-900 border border-dashed border-slate-700 text-slate-500 hover:text-emerald-400 hover:border-emerald-500/40 transition-colors cursor-pointer"
-        >
-          <Plus size={11} />
-          New
-        </button>
+        <div className="relative">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowTemplateMenu((v) => !v);
+            }}
+            title="New Profile"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-slate-900 border border-dashed border-slate-700 text-slate-500 hover:text-emerald-400 hover:border-emerald-500/40 transition-colors cursor-pointer"
+          >
+            <Plus size={11} />
+            New
+          </button>
+          {showTemplateMenu && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="absolute top-full left-0 mt-1 w-64 bg-slate-900 border border-slate-800 rounded-lg shadow-overlay py-1 z-20"
+            >
+              {PROFILE_TEMPLATES.map((template) => (
+                <button
+                  key={template.id}
+                  onClick={() => handleCreateFromTemplate(template.id)}
+                  title={template.description}
+                  className="w-full text-left px-2.5 py-1.5 hover:bg-slate-800 cursor-pointer"
+                >
+                  <div className="text-[11px] font-medium text-slate-200">{template.label}</div>
+                  <div className="text-[9px] text-slate-500 truncate">{template.description}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {selected ? (
@@ -182,7 +205,7 @@ export default function OrchestratorProfilesModal({ onClose }: OrchestratorProfi
                     launchOptions: { ...selected.launchOptions, commandTemplate: e.target.value },
                   })
                 }
-                placeholder="e.g. gh copilot suggest"
+                placeholder="e.g. gemini -p {{PROMPT}}"
                 className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500/50 font-mono"
               />
             </div>
@@ -203,6 +226,11 @@ export default function OrchestratorProfilesModal({ onClose }: OrchestratorProfi
               />
             </div>
           </div>
+          <p className="text-[9px] text-slate-600 leading-relaxed -mt-2">
+            Only used by the Custom Command adapter. Include <code>{"{{PROMPT}}"}</code> in the
+            template to pass the prompt as an inline argument (e.g. <code>gemini -p {"{{PROMPT}}"}</code>);
+            omit it and the prompt is piped over stdin instead (e.g. <code>ollama run llama3.1</code>).
+          </p>
 
           <div className="space-y-1">
             <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">

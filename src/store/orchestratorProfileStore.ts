@@ -65,13 +65,13 @@ export function toAgentLaunchOptionsPayload(options: OrchestratorLaunchOptions):
   };
 }
 
-const DEFAULT_PLANNER_PROMPT =
+export const DEFAULT_PLANNER_PROMPT =
   "You are a senior engineering lead scoping work in an existing repository. Given a goal, " +
   "write a short, concrete implementation plan as a few sentences or a short bullet list. " +
   "Focus on the sequence of concrete engineering steps and the files/areas likely involved. " +
   "Do not write code, and do not ask clarifying questions — make reasonable assumptions.";
 
-const DEFAULT_DECOMPOSER_PROMPT =
+export const DEFAULT_DECOMPOSER_PROMPT =
   "You are a task decomposition engine. Given a goal and an implementation plan, break the " +
   "work into a small number of discrete engineering tasks (typically 2-5) that can each be " +
   "carried out independently by an autonomous coding agent. Respond with ONLY a JSON array " +

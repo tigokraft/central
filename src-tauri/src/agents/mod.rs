@@ -207,15 +207,35 @@ fn single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+// Renders one shell-command argument (or the stdin payload), preserving PIPELINE_INPUT_SENTINEL
+// wherever it appears — even embedded inside a larger token, e.g. a Custom Command template's
+// `--prompt={{PROMPT}}` becomes the arg `--prompt=$CENTRAL_PIPELINE_INPUT` after
+// GenericCommandAdapter's placeholder substitution — so the shell still expands it at run time.
+// Every literal segment around it is double-quote-escaped rather than single-quoted, since a
+// single-quoted string would suppress that expansion entirely.
+fn render_shell_arg(arg: &str) -> String {
+    if !arg.contains(PIPELINE_INPUT_SENTINEL) {
+        return single_quote(arg);
+    }
+    let escaped_segments: Vec<String> = arg
+        .split(PIPELINE_INPUT_SENTINEL)
+        .map(|segment| {
+            segment
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('$', "\\$")
+                .replace('`', "\\`")
+        })
+        .collect();
+    format!("\"{}\"", escaped_segments.join(PIPELINE_INPUT_SENTINEL))
+}
+
 // Renders an adapter's LaunchSpec (built with prompt == PIPELINE_INPUT_SENTINEL) as a single
 // `sh -c`-safe command line string, suitable for a materialized actionContainerNode's `actions`
-// entry. Every literal arg is single-quoted; the one arg that carries the prompt (or the
-// stdin-delivered prompt) is instead double-quoted so the shell expands it against whatever
-// CENTRAL_PIPELINE_INPUT holds at execution time. `env` is prefixed as POSIX
-// `KEY='value' ...` assignments (sorted for deterministic output) scoped to just this command,
-// so a profile-configured var (e.g. a headless CLI auth token) reaches the process without the
-// user having to export anything in their own shell — graph_runner.rs's `sh -c` execution
-// already supports this syntax with no changes needed there.
+// entry. `env` is prefixed as POSIX `KEY='value' ...` assignments (sorted for deterministic
+// output) scoped to just this command, so a profile-configured var (e.g. a headless CLI auth
+// token) reaches the process without the user having to export anything in their own shell —
+// graph_runner.rs's `sh -c` execution already supports this syntax with no changes needed there.
 pub fn render_launch_as_shell_command(
     launch: &LaunchSpec,
     env: &HashMap<String, String>,
@@ -229,19 +249,12 @@ pub fn render_launch_as_shell_command(
 
     let mut parts = vec![single_quote(&launch.program)];
     for arg in &launch.args {
-        if arg == PIPELINE_INPUT_SENTINEL {
-            parts.push(format!("\"{PIPELINE_INPUT_SENTINEL}\""));
-        } else {
-            parts.push(single_quote(arg));
-        }
+        parts.push(render_shell_arg(arg));
     }
     let cmd = parts.join(" ");
 
     let piped = match launch.stdin_prompt.as_deref() {
-        Some(s) if s == PIPELINE_INPUT_SENTINEL => {
-            format!("printf '%s' \"{PIPELINE_INPUT_SENTINEL}\" | {cmd}")
-        }
-        Some(other) => format!("printf '%s' {} | {cmd}", single_quote(other)),
+        Some(s) => format!("printf '%s' {} | {cmd}", render_shell_arg(s)),
         None => cmd,
     };
 
@@ -357,6 +370,42 @@ mod command_line_tests {
         assert_eq!(
             render_launch_as_shell_command(&launch, &HashMap::new()),
             "'sh' '-c' \"$CENTRAL_PIPELINE_INPUT\""
+        );
+    }
+
+    #[test]
+    fn generic_command_with_prompt_placeholder_renders_as_inline_arg_not_stdin() {
+        let adapter = GenericCommandAdapter;
+        let options = AgentLaunchOptions {
+            command_template: Some("gemini -p {{PROMPT}}".to_string()),
+            ..Default::default()
+        };
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &options,
+        );
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &HashMap::new()),
+            "'gemini' '-p' \"$CENTRAL_PIPELINE_INPUT\""
+        );
+    }
+
+    #[test]
+    fn generic_command_with_placeholder_embedded_in_a_larger_token_still_expands() {
+        let adapter = GenericCommandAdapter;
+        let options = AgentLaunchOptions {
+            command_template: Some("mytool --prompt={{PROMPT}}".to_string()),
+            ..Default::default()
+        };
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &options,
+        );
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &HashMap::new()),
+            "'mytool' \"--prompt=$CENTRAL_PIPELINE_INPUT\""
         );
     }
 
