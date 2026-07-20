@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { GitBranch, RotateCcw } from "lucide-react";
+import { GitBranch, RotateCcw, FolderTree } from "lucide-react";
 import { useCanvasStore } from "../../store/canvasStore";
+import WorktreeFilesModal from "./WorktreeFilesModal";
 
 interface WorktreeInfo {
   nodeId: string;
@@ -26,6 +27,7 @@ export default function DeploymentsTracker() {
   const [repoHead, setRepoHead] = useState<RepoHeadInfo | null>(null);
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
   const [rollingBackId, setRollingBackId] = useState<string | null>(null);
+  const [viewingNodeId, setViewingNodeId] = useState<string | null>(null);
 
   const refresh = async () => {
     if (!activeProjectId) return;
@@ -100,20 +102,38 @@ export default function DeploymentsTracker() {
                   <span className="text-[10px] font-mono text-slate-300 truncate">{wt.nodeId}</span>
                   <span className="text-[9px] font-mono text-slate-500 shrink-0">{shortSha(wt.headCommit)}</span>
                 </div>
-                <button
-                  onClick={() => handleRollback(wt.nodeId)}
-                  disabled={rollingBackId === wt.nodeId}
-                  className="w-full flex items-center justify-center gap-1 text-[9px] font-semibold uppercase tracking-wide bg-slate-800 hover:bg-red-500/20 hover:text-red-400 text-slate-400 rounded px-2 py-1 transition-colors cursor-pointer disabled:opacity-50"
-                  title="Hard-reset this node's sandbox worktree back to its base commit"
-                >
-                  <RotateCcw size={9} />
-                  {rollingBackId === wt.nodeId ? "Rolling back..." : "Rollback to Canvas Node State"}
-                </button>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setViewingNodeId(wt.nodeId)}
+                    className="flex-1 flex items-center justify-center gap-1 text-[9px] font-semibold uppercase tracking-wide bg-slate-800 hover:bg-emerald-500/20 hover:text-emerald-400 text-slate-400 rounded px-2 py-1 transition-colors cursor-pointer"
+                    title="Browse this node's sandbox worktree read-only"
+                  >
+                    <FolderTree size={9} />
+                    View Files
+                  </button>
+                  <button
+                    onClick={() => handleRollback(wt.nodeId)}
+                    disabled={rollingBackId === wt.nodeId}
+                    className="flex-1 flex items-center justify-center gap-1 text-[9px] font-semibold uppercase tracking-wide bg-slate-800 hover:bg-red-500/20 hover:text-red-400 text-slate-400 rounded px-2 py-1 transition-colors cursor-pointer disabled:opacity-50"
+                    title="Hard-reset this node's sandbox worktree back to its base commit"
+                  >
+                    <RotateCcw size={9} />
+                    {rollingBackId === wt.nodeId ? "Rolling back..." : "Rollback"}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {viewingNodeId && activeProjectId && (
+        <WorktreeFilesModal
+          projectId={activeProjectId}
+          nodeId={viewingNodeId}
+          onClose={() => setViewingNodeId(null)}
+        />
+      )}
     </div>
   );
 }

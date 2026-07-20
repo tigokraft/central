@@ -22,6 +22,18 @@ export function readFile(projectId: string, path: string): Promise<string> {
   return invoke<string>("read_file", { projectId, path });
 }
 
+// Read-only counterparts of listDir/readFile, rooted at a node's isolated sandbox worktree
+// (see DeploymentsTracker's "Active Worktrees" list) instead of the main workspace — the only
+// way to see what a materialized task actually produced, since that sandbox never shows up in
+// the regular file tree and is never auto-merged into the main branch.
+export function listWorktreeDir(projectId: string, nodeId: string, path: string): Promise<FsEntry[]> {
+  return invoke<FsEntry[]>("list_worktree_dir", { projectId, nodeId, path });
+}
+
+export function readWorktreeFile(projectId: string, nodeId: string, path: string): Promise<string> {
+  return invoke<string>("read_worktree_file", { projectId, nodeId, path });
+}
+
 export function writeFile(projectId: string, path: string, content: string): Promise<void> {
   return invoke("write_file", { projectId, path, content });
 }

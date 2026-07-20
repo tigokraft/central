@@ -4,6 +4,13 @@ use std::path::Path;
 
 pub const GENERIC_COMMAND_ID: &str = "generic-command";
 
+// Literal token a command template can include to receive the prompt as an inline argument
+// instead of via stdin — needed for CLIs whose non-interactive mode takes the prompt as a flag
+// value (e.g. `gemini -p {{PROMPT}}`, `codex exec {{PROMPT}}`) rather than reading it from
+// piped input the way `ollama run <model>` does. Kept in sync with the same literal string in
+// src/lib/orchestrator/profileTemplates.ts, which is the only other place that needs to know it.
+pub const PROMPT_PLACEHOLDER: &str = "{{PROMPT}}";
+
 // Runs any user-supplied command line verbatim (e.g. `sh -c 'my-tool --headless'`, or a
 // non-Claude CLI's own headless invocation). No output format is assumed, so no adapter-level
 // events are derived from what the process prints — only its spawn and exit are meaningful,
@@ -40,14 +47,31 @@ impl AgentAdapter for GenericCommandAdapter {
             };
         }
 
+        // A template containing {{PROMPT}} wants the prompt inlined as an argument (e.g. a
+        // `-p`/`--prompt`-style flag); substituting it there means no stdin delivery is needed
+        // for that invocation. A template without it keeps the original stdin-delivery
+        // behavior, unchanged, for CLIs that just read piped input directly.
+        let has_placeholder = tokens.iter().any(|t| t.contains(PROMPT_PLACEHOLDER));
+        if has_placeholder {
+            for token in tokens.iter_mut() {
+                if token.contains(PROMPT_PLACEHOLDER) {
+                    *token = token.replace(PROMPT_PLACEHOLDER, prompt);
+                }
+            }
+        }
+
         tokens.extend(options.extra_args.iter().cloned());
         let program = tokens.remove(0);
         LaunchSpec {
             program,
             args: tokens,
-            // The template doesn't know about the prompt, so it's delivered the way a human
-            // would type it in: written to the process's stdin once it's running.
-            stdin_prompt: Some(prompt.to_string()),
+            stdin_prompt: if has_placeholder {
+                None
+            } else {
+                // The template doesn't know about the prompt, so it's delivered the way a
+                // human would type it in: written to the process's stdin once it's running.
+                Some(prompt.to_string())
+            },
         }
     }
 
@@ -171,6 +195,31 @@ mod tests {
         assert_eq!(launch.program, "sh");
         assert_eq!(launch.args, vec!["-c", "echo hi; sleep 1"]);
         assert_eq!(launch.stdin_prompt, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn build_launch_substitutes_prompt_placeholder_as_inline_argument() {
+        let adapter = GenericCommandAdapter;
+        let options = AgentLaunchOptions {
+            command_template: Some("gemini -p {{PROMPT}}".to_string()),
+            ..Default::default()
+        };
+        let launch = adapter.build_launch("say hi", Path::new("/tmp"), &options);
+        assert_eq!(launch.program, "gemini");
+        assert_eq!(launch.args, vec!["-p", "say hi"]);
+        assert_eq!(launch.stdin_prompt, None);
+    }
+
+    #[test]
+    fn build_launch_substitutes_placeholder_embedded_within_a_larger_token() {
+        let adapter = GenericCommandAdapter;
+        let options = AgentLaunchOptions {
+            command_template: Some("mytool --prompt={{PROMPT}}".to_string()),
+            ..Default::default()
+        };
+        let launch = adapter.build_launch("hello world", Path::new("/tmp"), &options);
+        assert_eq!(launch.args, vec!["--prompt=hello world"]);
+        assert_eq!(launch.stdin_prompt, None);
     }
 
     #[test]

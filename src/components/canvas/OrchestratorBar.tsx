@@ -1,7 +1,18 @@
-import { useState, FormEvent } from "react";
+import { useEffect, useState, FormEvent } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Sparkles, ArrowRight, Loader2 } from "lucide-react";
-import { useCanvasStore, CanvasNode } from "../../store/canvasStore";
-import { parseOrchestratorGoal } from "../../lib/orchestratorParser";
+import { useCanvasStore, CanvasNode, flushActivePipelineSave } from "../../store/canvasStore";
+import { parseOrchestratorGoal, titleCase, type OrchestratorPlan } from "../../lib/orchestratorParser";
+import {
+  useOrchestratorProfileStore,
+  toAgentLaunchOptionsPayload,
+  type AgentAvailability,
+  type OrchestratorProfile,
+} from "../../store/orchestratorProfileStore";
+import { runAgentHeadless, buildTaskCommandLine } from "../../lib/orchestrator/agentRunner";
+import { parseTaskListJson } from "../../lib/orchestrator/schema";
+import { materializeTaskGraph } from "../../lib/orchestrator/materialize";
+import { cn } from "../../lib/cn";
 import Button from "../ui/Button";
 
 const CHILD_WIDTH = 320;
@@ -12,6 +23,8 @@ const FRAME_SIDE_PADDING = 40;
 const FRAME_TOP_PADDING = 70;
 const FRAME_BOTTOM_MARGIN = 50;
 
+type OrchestratorMode = "design" | "run";
+
 // Finds an empty spot to the right of every existing node so successive orchestrator runs
 // never stack their generated plans on top of one another.
 function findDropPosition(nodes: CanvasNode[]): { x: number; y: number } {
@@ -20,12 +33,12 @@ function findDropPosition(nodes: CanvasNode[]): { x: number; y: number } {
   return { x: maxX + 140, y: 140 };
 }
 
-// Parses the goal, drops the resulting Coder/Reviewer/Test Runner nodes nested inside a new
-// Figma-style Action Frame, and wires their cables in sequence: pure client-side layout, no
-// network call involved.
-function runOrchestrator(goal: string) {
+// Applies a regex-parsed plan directly to the currently open pipeline: the original,
+// unchanged offline behavior, used both for the ephemeral quick-check shortcut (always, goal
+// permitting — see EPHEMERAL_PREFIX in orchestratorParser.ts) and as the explicit fallback when
+// no orchestrator profile/agent is available for the two-stage LLM flow below.
+function applyPlanToCurrentPipeline(plan: OrchestratorPlan) {
   const store = useCanvasStore.getState();
-  const plan = parseOrchestratorGoal(goal);
   const { x: startX, y: startY } = findDropPosition(store.nodes);
 
   if (plan.kind === "ephemeral") {
@@ -78,19 +91,138 @@ function runOrchestrator(goal: string) {
   store.setViewport({ x: 220 - startX * vp.zoom, y: 180 - startY * vp.zoom });
 }
 
+async function isAdapterAvailable(adapterId: string): Promise<boolean> {
+  try {
+    const agents = await invoke<AgentAvailability[]>("list_available_agents");
+    return agents.some((a) => a.id === adapterId && a.available);
+  } catch (err) {
+    console.error("Failed to check agent availability:", err);
+    return false;
+  }
+}
+
+// Runs the Planner -> Decomposer flow through the given profile's adapter, materializes the
+// resulting task graph as a brand new pipeline, and switches the canvas into it. In "run" mode,
+// immediately executes it via the existing graph runner. Falls back to the regex-generated plan
+// (unchanged behavior) if the Decomposer's JSON still fails to parse after one retry.
+async function runLlmFlow(
+  profile: OrchestratorProfile,
+  goal: string,
+  regexPlan: OrchestratorPlan,
+  mode: OrchestratorMode
+): Promise<string | null> {
+  const activeProjectId = useCanvasStore.getState().activeProjectId;
+  if (!activeProjectId) return "No active project.";
+
+  const projectMeta = await invoke<{ workspacePath: string }>("ensure_project_workspace", {
+    projectId: activeProjectId,
+  });
+  const cwd = projectMeta.workspacePath;
+  const optionsPayload = toAgentLaunchOptionsPayload(profile.launchOptions);
+
+  const plannerResult = await runAgentHeadless(
+    profile.adapterId,
+    `${profile.plannerPrompt}\n\nGoal:\n${goal}`,
+    optionsPayload,
+    cwd
+  );
+  console.info("[orchestrator] planner output:", plannerResult.text);
+
+  if (!plannerResult.text.trim()) {
+    applyPlanToCurrentPipeline(regexPlan);
+    return "Planner returned no output; used the offline parser instead.";
+  }
+
+  const decomposerPrompt = (extra?: string) =>
+    `${profile.decomposerPrompt}\n\nGoal:\n${goal}\n\nPlan:\n${plannerResult.text}${extra ? `\n\n${extra}` : ""}`;
+
+  let decomposerResult = await runAgentHeadless(profile.adapterId, decomposerPrompt(), optionsPayload, cwd);
+  let parsed = parseTaskListJson(decomposerResult.text);
+  console.info("[orchestrator] decomposer attempt 1 output:", decomposerResult.text, "parsed:", parsed);
+
+  if (!parsed.ok) {
+    const retryExtra = `Your previous response failed to parse: ${parsed.error}\n\nRespond with ONLY the corrected JSON array, no prose, no code fences.`;
+    decomposerResult = await runAgentHeadless(profile.adapterId, decomposerPrompt(retryExtra), optionsPayload, cwd);
+    parsed = parseTaskListJson(decomposerResult.text);
+    console.info("[orchestrator] decomposer attempt 2 output:", decomposerResult.text, "parsed:", parsed);
+  }
+
+  if (!parsed.ok) {
+    console.error("[orchestrator] decomposer gave up after retry:", parsed.error);
+    applyPlanToCurrentPipeline(regexPlan);
+    return `Decomposer failed to produce a valid task list (${parsed.error}); used the offline parser instead.`;
+  }
+
+  const taskCommand = await buildTaskCommandLine(profile.adapterId, optionsPayload);
+  const frameId = `actionFrameNode-${crypto.randomUUID()}`;
+  const { nodes, edges } = materializeTaskGraph(parsed.tasks, titleCase(goal), frameId, taskCommand);
+  const graph = { nodes, edges, viewport: { x: 0, y: 0, zoom: 1 } };
+
+  const meta = await invoke<{ id: string }>("create_pipeline", {
+    projectId: activeProjectId,
+    name: titleCase(goal),
+  });
+  await invoke("save_pipeline_graph", { projectId: activeProjectId, pipelineId: meta.id, graph });
+
+  useCanvasStore.getState().bumpPipelineListVersion();
+  await flushActivePipelineSave();
+  useCanvasStore.getState().hydratePipeline(activeProjectId, meta.id, graph);
+
+  if (mode === "run") {
+    await useCanvasStore.getState().runPipeline();
+  }
+
+  return null;
+}
+
 export default function OrchestratorBar() {
   const [value, setValue] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [mode, setMode] = useState<OrchestratorMode>("design");
+  const [overrideProfileId, setOverrideProfileId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const handleSubmit = (e: FormEvent) => {
+  const activeProjectId = useCanvasStore((state) => state.activeProjectId);
+  const profiles = useOrchestratorProfileStore((state) => state.profiles);
+  const getActiveProfileId = useOrchestratorProfileStore((state) => state.getActiveProfileId);
+  const setActiveProfileId = useOrchestratorProfileStore((state) => state.setActiveProfileId);
+
+  useEffect(() => {
+    if (overrideProfileId && profiles.some((p) => p.id === overrideProfileId)) return;
+    setOverrideProfileId(getActiveProfileId(activeProjectId));
+  }, [activeProjectId, profiles, overrideProfileId, getActiveProfileId]);
+
+  const effectiveProfile = profiles.find((p) => p.id === overrideProfileId) ?? null;
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const goal = value.trim();
     if (!goal || isRunning) return;
 
     setIsRunning(true);
+    setStatusMessage(null);
     try {
-      runOrchestrator(goal);
+      const plan = parseOrchestratorGoal(goal);
+
+      if (plan.kind === "ephemeral") {
+        applyPlanToCurrentPipeline(plan);
+        setValue("");
+        return;
+      }
+
+      const agentAvailable = effectiveProfile ? await isAdapterAvailable(effectiveProfile.adapterId) : false;
+      if (!effectiveProfile || !agentAvailable) {
+        applyPlanToCurrentPipeline(plan);
+        setValue("");
+        return;
+      }
+
+      const fallbackReason = await runLlmFlow(effectiveProfile, goal, plan, mode);
+      if (fallbackReason) setStatusMessage(fallbackReason);
       setValue("");
+    } catch (err) {
+      console.error("Orchestrator run failed:", err);
+      setStatusMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setIsRunning(false);
     }
@@ -112,6 +244,42 @@ export default function OrchestratorBar() {
           placeholder='Describe what to build… e.g. "Build an auth handler with unit tests and a security reviewer"'
           className="flex-1 min-w-0 bg-slate-900 border border-slate-800 focus:border-emerald-500/60 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none font-mono transition-colors"
         />
+
+        {profiles.length > 0 && (
+          <select
+            value={overrideProfileId ?? ""}
+            onChange={(e) => {
+              const id = e.target.value || null;
+              setOverrideProfileId(id);
+              if (id && activeProjectId) setActiveProfileId(activeProjectId, id);
+            }}
+            title="Orchestrator profile (persists as this project's default)"
+            className="hidden lg:block shrink-0 w-28 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono focus:outline-none focus:border-emerald-500/50 cursor-pointer"
+          >
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <div className="hidden sm:flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 shrink-0">
+          {(["design", "run"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                "px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors cursor-pointer",
+                mode === m ? "bg-emerald-500/15 text-emerald-400" : "text-slate-500 hover:text-slate-300"
+              )}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+
         <Button
           type="submit"
           variant="primary"
@@ -119,9 +287,17 @@ export default function OrchestratorBar() {
           className="tracking-wide shrink-0"
         >
           {isRunning ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
-          Generate
+          {mode === "run" ? "Run" : "Design"}
         </Button>
       </form>
+      {statusMessage && (
+        <span
+          className="hidden md:inline text-[10px] text-amber-400 truncate max-w-[200px] shrink-0"
+          title={statusMessage}
+        >
+          {statusMessage}
+        </span>
+      )}
     </div>
   );
 }

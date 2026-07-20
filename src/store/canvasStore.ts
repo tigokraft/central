@@ -199,6 +199,10 @@ interface CanvasState {
   // Id of the pipeline (tab) within activeProjectId currently loaded onto the canvas; null
   // until a pipeline has been hydrated. Autosave writes to this pipeline's graph file.
   activePipelineId: string | null;
+  // Bumped whenever a pipeline is created/deleted/renamed outside of PipelineTabBar's own CRUD
+  // handlers (e.g. the orchestrator creating a new "Design" pipeline behind its back), so
+  // PipelineTabBar knows to refetch its locally-held pipeline list.
+  pipelineListVersion: number;
   activeTool: "select" | "hand" | "frame";
   draggingEdge: {
     sourceId: string;
@@ -256,6 +260,8 @@ interface CanvasState {
   // Execution
   runPipeline: () => Promise<void>;
 
+  bumpPipelineListVersion: () => void;
+
   // Execution state (driven by graph_runner events)
   edgeExecState: Record<string, EdgeExecState>;
   cableDiffStats: Record<string, CableDiffStat>;
@@ -298,6 +304,7 @@ export const useCanvasStore = create<CanvasState>()(
   edges: [],
   activeProjectId: null,
   activePipelineId: null,
+  pipelineListVersion: 0,
   activeTool: "select",
   draggingEdge: null,
   pointerCanvasPosition: null,
@@ -742,6 +749,8 @@ export const useCanvasStore = create<CanvasState>()(
     })),
 
   setPipelineRunning: (running) => set({ isPipelineRunning: running }),
+
+  bumpPipelineListVersion: () => set((state) => ({ pipelineListVersion: state.pipelineListVersion + 1 })),
     }),
     {
       // Only nodes/edges are undoable — viewport, selection, drag state, and execution

@@ -356,6 +356,16 @@ impl GitEngineState {
             .collect()
     }
 
+    /// Resolves a node's sandbox worktree path, if one is currently active, for browsing its
+    /// contents (see workspace_fs.rs's list_worktree_dir/read_worktree_file) without exposing
+    /// the raw path map itself outside this module.
+    pub fn worktree_path(&self, project_id: &str, node_id: &str) -> Option<PathBuf> {
+        let worktrees = self.worktrees.lock().unwrap();
+        worktrees
+            .get(&(project_id.to_string(), node_id.to_string()))
+            .map(|handle| handle.path.clone())
+    }
+
     /// Hard-resets a node's sandbox worktree back to the commit it branched from, discarding
     /// any agent edits (including new untracked files). This only ever touches the node's own
     /// throwaway worktree, never the primary working branch, so it is safe to expose as a
@@ -1285,6 +1295,26 @@ mod tests {
         assert_eq!(listed[0].node_id, "node-1");
 
         let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn worktree_path_returns_active_sandbox_path() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+
+        let path = state
+            .ensure_worktree("proj-a", &repo_root, "node-1")
+            .unwrap();
+
+        assert_eq!(state.worktree_path("proj-a", "node-1"), Some(path));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn worktree_path_returns_none_for_unknown_node() {
+        let state = GitEngineState::default();
+        assert_eq!(state.worktree_path("proj-a", "no-such-node"), None);
     }
 
     #[test]

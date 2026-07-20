@@ -4,13 +4,14 @@ mod event;
 mod generic;
 mod path_detect;
 
-pub use adapter::{AgentAdapter, AgentLaunchOptions};
+pub use adapter::{AgentAdapter, AgentLaunchOptions, LaunchSpec};
 pub use event::AgentEvent;
 
 use claude_code::ClaudeCodeAdapter;
 use generic::GenericCommandAdapter;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -109,6 +110,12 @@ pub fn launch_agent_session(
         cmd.arg(arg);
     }
     cmd.cwd(&cwd_path);
+    // Layered on top of the inherited process environment (CommandBuilder starts pre-populated
+    // from it), so a profile-configured var like a headless CLI auth token doesn't require the
+    // user to export anything in the shell that launched the app.
+    for (key, value) in &options.env {
+        cmd.env(key, value);
+    }
 
     // Started is synthesized here (spawn success), not parsed from output, so it fires for
     // every adapter uniformly — GenericCommand's parse_line never derives events from content.
@@ -185,4 +192,225 @@ pub fn send_agent_input(
     pty_state: State<'_, crate::pty_manager::PtyManager>,
 ) -> Result<(), String> {
     crate::pty_manager::write_pty_data(&node_id, &format!("{text}\n"), &pty_state)
+}
+
+// Literal placeholder passed as an adapter's "prompt" when rendering a headless invocation as a
+// reusable shell command line: graph_runner.rs already exports every node's upstream context as
+// this exact env var (see run_shell_command in graph_runner.rs), so an arg/stdin payload that
+// equals this sentinel is emitted still-expandable (double-quoted) rather than escaped as a
+// literal, letting one rendered command line work for any prompt text at run time.
+const PIPELINE_INPUT_SENTINEL: &str = "$CENTRAL_PIPELINE_INPUT";
+
+// POSIX single-quote escaping: safe for any literal argument value (flags, models, templates)
+// since single quotes suppress all expansion inside sh -c.
+fn single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+// Renders one shell-command argument (or the stdin payload), preserving PIPELINE_INPUT_SENTINEL
+// wherever it appears — even embedded inside a larger token, e.g. a Custom Command template's
+// `--prompt={{PROMPT}}` becomes the arg `--prompt=$CENTRAL_PIPELINE_INPUT` after
+// GenericCommandAdapter's placeholder substitution — so the shell still expands it at run time.
+// Every literal segment around it is double-quote-escaped rather than single-quoted, since a
+// single-quoted string would suppress that expansion entirely.
+fn render_shell_arg(arg: &str) -> String {
+    if !arg.contains(PIPELINE_INPUT_SENTINEL) {
+        return single_quote(arg);
+    }
+    let escaped_segments: Vec<String> = arg
+        .split(PIPELINE_INPUT_SENTINEL)
+        .map(|segment| {
+            segment
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('$', "\\$")
+                .replace('`', "\\`")
+        })
+        .collect();
+    format!("\"{}\"", escaped_segments.join(PIPELINE_INPUT_SENTINEL))
+}
+
+// Renders an adapter's LaunchSpec (built with prompt == PIPELINE_INPUT_SENTINEL) as a single
+// `sh -c`-safe command line string, suitable for a materialized actionContainerNode's `actions`
+// entry. `env` is prefixed as POSIX `KEY='value' ...` assignments (sorted for deterministic
+// output) scoped to just this command, so a profile-configured var (e.g. a headless CLI auth
+// token) reaches the process without the user having to export anything in their own shell —
+// graph_runner.rs's `sh -c` execution already supports this syntax with no changes needed there.
+pub fn render_launch_as_shell_command(
+    launch: &LaunchSpec,
+    env: &HashMap<String, String>,
+) -> String {
+    let mut sorted_env: Vec<(&String, &String)> = env.iter().collect();
+    sorted_env.sort_by_key(|(k, _)| k.as_str());
+    let env_prefix: String = sorted_env
+        .iter()
+        .map(|(k, v)| format!("{k}={} ", single_quote(v)))
+        .collect();
+
+    let mut parts = vec![single_quote(&launch.program)];
+    for arg in &launch.args {
+        parts.push(render_shell_arg(arg));
+    }
+    let cmd = parts.join(" ");
+
+    let piped = match launch.stdin_prompt.as_deref() {
+        Some(s) => format!("printf '%s' {} | {cmd}", render_shell_arg(s)),
+        None => cmd,
+    };
+
+    format!("{env_prefix}{piped}")
+}
+
+// Renders the given adapter's headless CLI invocation as a shell command line that reads its
+// prompt from $CENTRAL_PIPELINE_INPUT at run time, for embedding directly into a materialized
+// task node's `actions` list. Adapter-agnostic by construction: it only ever calls the trait's
+// own build_launch, so a future adapter needs no changes here to work with the orchestrator.
+#[tauri::command]
+pub fn build_task_command_line(
+    adapter_id: String,
+    options: Option<AgentLaunchOptions>,
+    registry: State<'_, AgentRegistry>,
+) -> Result<String, String> {
+    let adapter = registry
+        .get(&adapter_id)
+        .ok_or_else(|| format!("Unknown agent adapter: {adapter_id}"))?;
+    let options = options.unwrap_or_default();
+    let launch = adapter.build_launch(
+        PIPELINE_INPUT_SENTINEL,
+        PathBuf::from(".").as_path(),
+        &options,
+    );
+    Ok(render_launch_as_shell_command(&launch, &options.env))
+}
+
+#[cfg(test)]
+mod command_line_tests {
+    use super::*;
+
+    #[test]
+    fn claude_code_default_options_renders_expected_command() {
+        let adapter = ClaudeCodeAdapter;
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &AgentLaunchOptions::default(),
+        );
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &HashMap::new()),
+            "'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose'"
+        );
+    }
+
+    #[test]
+    fn claude_code_with_model_and_extra_args_renders_expected_command() {
+        let adapter = ClaudeCodeAdapter;
+        let options = AgentLaunchOptions {
+            model: Some("sonnet".to_string()),
+            extra_args: vec!["--effort".to_string(), "high".to_string()],
+            ..Default::default()
+        };
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &options,
+        );
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &HashMap::new()),
+            "'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose' '--model' 'sonnet' '--effort' 'high'"
+        );
+    }
+
+    #[test]
+    fn env_vars_are_prefixed_sorted_and_single_quoted() {
+        let adapter = ClaudeCodeAdapter;
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &AgentLaunchOptions::default(),
+        );
+        let env = HashMap::from([
+            (
+                "CLAUDE_CODE_OAUTH_TOKEN".to_string(),
+                "it's a token".to_string(),
+            ),
+            ("ANTHROPIC_LOG".to_string(), "debug".to_string()),
+        ]);
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &env),
+            "ANTHROPIC_LOG='debug' CLAUDE_CODE_OAUTH_TOKEN='it'\\''s a token' 'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose'"
+        );
+    }
+
+    #[test]
+    fn generic_command_with_template_uses_stdin_pipe() {
+        let adapter = GenericCommandAdapter;
+        let options = AgentLaunchOptions {
+            command_template: Some("sh -c 'echo hi; sleep 1'".to_string()),
+            ..Default::default()
+        };
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &options,
+        );
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &HashMap::new()),
+            "printf '%s' \"$CENTRAL_PIPELINE_INPUT\" | 'sh' '-c' 'echo hi; sleep 1'"
+        );
+    }
+
+    #[test]
+    fn generic_command_without_template_runs_prompt_as_shell_command() {
+        let adapter = GenericCommandAdapter;
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &AgentLaunchOptions::default(),
+        );
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &HashMap::new()),
+            "'sh' '-c' \"$CENTRAL_PIPELINE_INPUT\""
+        );
+    }
+
+    #[test]
+    fn generic_command_with_prompt_placeholder_renders_as_inline_arg_not_stdin() {
+        let adapter = GenericCommandAdapter;
+        let options = AgentLaunchOptions {
+            command_template: Some("gemini -p {{PROMPT}}".to_string()),
+            ..Default::default()
+        };
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &options,
+        );
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &HashMap::new()),
+            "'gemini' '-p' \"$CENTRAL_PIPELINE_INPUT\""
+        );
+    }
+
+    #[test]
+    fn generic_command_with_placeholder_embedded_in_a_larger_token_still_expands() {
+        let adapter = GenericCommandAdapter;
+        let options = AgentLaunchOptions {
+            command_template: Some("mytool --prompt={{PROMPT}}".to_string()),
+            ..Default::default()
+        };
+        let launch = adapter.build_launch(
+            PIPELINE_INPUT_SENTINEL,
+            PathBuf::from(".").as_path(),
+            &options,
+        );
+        assert_eq!(
+            render_launch_as_shell_command(&launch, &HashMap::new()),
+            "'mytool' \"--prompt=$CENTRAL_PIPELINE_INPUT\""
+        );
+    }
+
+    #[test]
+    fn single_quote_escapes_embedded_single_quotes() {
+        assert_eq!(single_quote("it's fine"), "'it'\\''s fine'");
+    }
 }
