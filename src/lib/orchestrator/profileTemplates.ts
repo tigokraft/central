@@ -49,14 +49,16 @@ export const PROFILE_TEMPLATES: OrchestratorProfileTemplate[] = [
     launchOptions: blankLaunchOptions("ollama run llama3.1"),
   },
   {
-    id: "gemini-cli",
-    label: "Gemini CLI",
+    id: "antigravity-cli",
+    label: "Antigravity CLI",
     description:
-      "Google's gemini CLI in one-shot mode. --skip-trust avoids an interactive folder-trust " +
-      "prompt Gemini can't show when spawned headlessly like this. Flag names shift across " +
-      "versions — verify against `gemini --help` before relying on this.",
+      "Google's Antigravity CLI (`agy`), the successor to Gemini CLI's individual free tier. " +
+      "Least-verified template in this set — it's a very recent product and this -p flag/one-" +
+      "shot behavior is a guess by analogy with Gemini CLI, not confirmed. Check `agy --help` " +
+      "before relying on this, especially for a headless-mode folder-trust flag if it prompts " +
+      "for one the way Gemini CLI used to.",
     adapterId: "generic-command",
-    launchOptions: blankLaunchOptions(`gemini -p ${PROMPT_PLACEHOLDER} --skip-trust`),
+    launchOptions: blankLaunchOptions(`agy -p ${PROMPT_PLACEHOLDER}`),
   },
   {
     id: "codex-cli",
