@@ -198,8 +198,10 @@ pub fn send_agent_input(
 // reusable shell command line: graph_runner.rs already exports every node's upstream context as
 // this exact env var (see run_shell_command in graph_runner.rs), so an arg/stdin payload that
 // equals this sentinel is emitted still-expandable (double-quoted) rather than escaped as a
-// literal, letting one rendered command line work for any prompt text at run time.
-const PIPELINE_INPUT_SENTINEL: &str = "$CENTRAL_PIPELINE_INPUT";
+// literal, letting one rendered command line work for any prompt text at run time. pub(crate)
+// so the orchestration module can render the same adapter-agnostic command line for a task's
+// actual prompt without going through the build_task_command_line Tauri command.
+pub(crate) const PIPELINE_INPUT_SENTINEL: &str = "$CENTRAL_PIPELINE_INPUT";
 
 // POSIX single-quote escaping: safe for any literal argument value (flags, models, templates)
 // since single quotes suppress all expansion inside sh -c.
@@ -262,9 +264,23 @@ pub fn render_launch_as_shell_command(
 }
 
 // Renders the given adapter's headless CLI invocation as a shell command line that reads its
-// prompt from $CENTRAL_PIPELINE_INPUT at run time, for embedding directly into a materialized
-// task node's `actions` list. Adapter-agnostic by construction: it only ever calls the trait's
-// own build_launch, so a future adapter needs no changes here to work with the orchestrator.
+// prompt from $CENTRAL_PIPELINE_INPUT at run time. Adapter-agnostic by construction: it only
+// ever calls the trait's own build_launch, so a future adapter needs no changes here to work
+// with either the canvas orchestrator or the multi-agent task orchestrator. Shared by the
+// build_task_command_line Tauri command (materialized task nodes' `actions` list) and the
+// orchestration module (each task's agent invocation inside its own worktree).
+pub(crate) fn render_task_command(
+    adapter: &Arc<dyn AgentAdapter>,
+    options: &AgentLaunchOptions,
+) -> String {
+    let launch = adapter.build_launch(
+        PIPELINE_INPUT_SENTINEL,
+        PathBuf::from(".").as_path(),
+        options,
+    );
+    render_launch_as_shell_command(&launch, &options.env)
+}
+
 #[tauri::command]
 pub fn build_task_command_line(
     adapter_id: String,
@@ -275,12 +291,7 @@ pub fn build_task_command_line(
         .get(&adapter_id)
         .ok_or_else(|| format!("Unknown agent adapter: {adapter_id}"))?;
     let options = options.unwrap_or_default();
-    let launch = adapter.build_launch(
-        PIPELINE_INPUT_SENTINEL,
-        PathBuf::from(".").as_path(),
-        &options,
-    );
-    Ok(render_launch_as_shell_command(&launch, &options.env))
+    Ok(render_task_command(&adapter, &options))
 }
 
 #[cfg(test)]

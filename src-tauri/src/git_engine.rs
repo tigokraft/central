@@ -57,6 +57,15 @@ struct WorktreeHandle {
     base_commit: String,
 }
 
+// A single task's sandbox worktree within an orchestration run, checked out on its own
+// `task/<id>` branch. Kept separate from the pipeline-node `worktrees` map above since task
+// worktrees branch off the run's staging branch (not the project's HEAD) and are pruned/
+// recreated per task rather than per whole run.
+struct TaskWorktreeHandle {
+    worktree_name: String,
+    path: PathBuf,
+}
+
 /// How a workbench session's terminal is bound to git: run directly against the main
 /// workspace, or in an isolated worktree checked out to an existing or brand-new branch.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -99,7 +108,17 @@ pub struct GitEngineState {
     // the ephemeral pipeline-node worktrees map above since sessions are long-lived and
     // persisted across app restarts rather than pruned at the start of every run.
     bindings: Mutex<HashMap<WorktreeKey, WorkbenchBindingHandle>>,
+    // Keyed by (project_id, task_id) — an orchestration run's per-task sandbox worktrees.
+    task_worktrees: Mutex<HashMap<WorktreeKey, TaskWorktreeHandle>>,
+    // Keyed by project_id — the single shared worktree an orchestration run uses to check out
+    // `central/staging` for running the project's test command against accumulated merges.
+    staging_worktrees: Mutex<HashMap<String, PathBuf>>,
 }
+
+/// Name of the branch (and its per-project worktree) an orchestration run accumulates every
+/// task's merged work onto before it's promoted to the project's main branch.
+const STAGING_BRANCH: &str = "central/staging";
+const STAGING_WORKTREE_NAME: &str = "central-staging";
 
 const CENTRAL_GITIGNORE_ENTRY: &str = ".central/";
 
@@ -187,6 +206,119 @@ fn prune_workbench_worktree(
             let _ = branch.delete();
         }
     }
+}
+
+// Prunes a worktree registration by name (git-level metadata plus its working directory),
+// tolerating either half already being gone. Shared by staging and task worktree cleanup,
+// which — unlike prune_worktree/prune_workbench_worktree above — never delete a branch here:
+// callers that need the underlying branch gone (task retries, staging reset) do so themselves,
+// since a worktree name and its branch name aren't always the same string in this module.
+fn prune_named_worktree(repo: &Repository, worktree_name: &str, path: &Path) {
+    if let Ok(wt) = repo.find_worktree(worktree_name) {
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.working_tree(true);
+        let _ = wt.prune(Some(&mut opts));
+    }
+    let _ = std::fs::remove_dir_all(path);
+}
+
+// Merges `branch_name` into the repo's currently checked-out HEAD, in the main working
+// directory. Shared by promote_session (a workbench session's branch) and
+// promote_staging_to_main (an orchestration run's `central/staging` branch) since both are
+// "merge this ref into whatever the user has checked out" with identical fast-forward/merge/
+// conflict-abort semantics — they differ only in how the branch name is resolved.
+fn merge_branch_into_head(repo_root: &Path, branch_name: &str) -> Result<PromoteResult, String> {
+    let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+    let branch_commit = repo
+        .find_branch(branch_name, git2::BranchType::Local)
+        .and_then(|b| b.get().peel_to_commit())
+        .map_err(|e| e.to_string())?;
+    let annotated = repo
+        .find_annotated_commit(branch_commit.id())
+        .map_err(|e| e.to_string())?;
+
+    let (analysis, _) = repo
+        .merge_analysis(&[&annotated])
+        .map_err(|e| e.to_string())?;
+
+    if analysis.is_up_to_date() {
+        return Ok(PromoteResult {
+            branch: branch_name.to_string(),
+            merge_commit_sha: None,
+            fast_forward: false,
+            up_to_date: true,
+        });
+    }
+
+    if analysis.is_fast_forward() {
+        let mut head_ref = repo.head().map_err(|e| e.to_string())?;
+        let refname = head_ref
+            .name()
+            .ok_or("Cannot fast-forward a detached HEAD")?
+            .to_string();
+        head_ref
+            .set_target(branch_commit.id(), "promote: fast-forward")
+            .map_err(|e| e.to_string())?;
+        repo.set_head(&refname).map_err(|e| e.to_string())?;
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .map_err(|e| e.to_string())?;
+        return Ok(PromoteResult {
+            branch: branch_name.to_string(),
+            merge_commit_sha: Some(branch_commit.id().to_string()),
+            fast_forward: true,
+            up_to_date: false,
+        });
+    }
+
+    repo.merge(&[&annotated], None, None)
+        .map_err(|e| e.to_string())?;
+
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    if index.has_conflicts() {
+        let head_commit = repo
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map_err(|e| e.to_string())?;
+        let _ = repo.cleanup_state();
+        repo.reset(head_commit.as_object(), ResetType::Hard, None)
+            .map_err(|e| e.to_string())?;
+        return Err(format!(
+            "Merge conflict promoting '{}': resolve manually and retry",
+            branch_name
+        ));
+    }
+
+    let tree_oid = index.write_tree().map_err(|e| e.to_string())?;
+    let tree = repo.find_tree(tree_oid).map_err(|e| e.to_string())?;
+    let sig = repo
+        .signature()
+        .or_else(|_| Signature::now("Central", "central@local"))
+        .map_err(|e| e.to_string())?;
+    let head_commit = repo
+        .head()
+        .and_then(|h| h.peel_to_commit())
+        .map_err(|e| e.to_string())?;
+    let message = format!("Merge branch '{}'", branch_name);
+    let commit_oid = repo
+        .commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            &message,
+            &tree,
+            &[&head_commit, &branch_commit],
+        )
+        .map_err(|e| e.to_string())?;
+    repo.cleanup_state().map_err(|e| e.to_string())?;
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .map_err(|e| e.to_string())?;
+
+    Ok(PromoteResult {
+        branch: branch_name.to_string(),
+        merge_commit_sha: Some(commit_oid.to_string()),
+        fast_forward: false,
+        up_to_date: false,
+    })
 }
 
 impl GitEngineState {
@@ -521,98 +653,298 @@ impl GitEngineState {
                 .and_then(|h| h.branch_name.clone())
                 .ok_or_else(|| "Session has no branch to promote".to_string())?
         };
+        merge_branch_into_head(repo_root, &branch_name)
+    }
 
+    /// Resets an orchestration run's shared `central/staging` branch to the project's current
+    /// HEAD, sweeping away any staging worktree/branch and task worktrees/branches left over
+    /// from a previous run. Called once at the start of every new run so tasks always branch
+    /// off a clean, current base.
+    pub fn reset_staging(&self, project_id: &str, repo_root: &Path) -> Result<(), String> {
         let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
-        let branch_commit = repo
-            .find_branch(&branch_name, git2::BranchType::Local)
-            .and_then(|b| b.get().peel_to_commit())
-            .map_err(|e| e.to_string())?;
-        let annotated = repo
-            .find_annotated_commit(branch_commit.id())
-            .map_err(|e| e.to_string())?;
-
-        let (analysis, _) = repo
-            .merge_analysis(&[&annotated])
-            .map_err(|e| e.to_string())?;
-
-        if analysis.is_up_to_date() {
-            return Ok(PromoteResult {
-                branch: branch_name,
-                merge_commit_sha: None,
-                fast_forward: false,
-                up_to_date: true,
-            });
-        }
-
-        if analysis.is_fast_forward() {
-            let mut head_ref = repo.head().map_err(|e| e.to_string())?;
-            let refname = head_ref
-                .name()
-                .ok_or("Cannot fast-forward a detached HEAD")?
-                .to_string();
-            head_ref
-                .set_target(branch_commit.id(), "workbench promote: fast-forward")
-                .map_err(|e| e.to_string())?;
-            repo.set_head(&refname).map_err(|e| e.to_string())?;
-            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
-                .map_err(|e| e.to_string())?;
-            return Ok(PromoteResult {
-                branch: branch_name,
-                merge_commit_sha: Some(branch_commit.id().to_string()),
-                fast_forward: true,
-                up_to_date: false,
-            });
-        }
-
-        repo.merge(&[&annotated], None, None)
-            .map_err(|e| e.to_string())?;
-
-        let mut index = repo.index().map_err(|e| e.to_string())?;
-        if index.has_conflicts() {
-            let head_commit = repo
-                .head()
-                .and_then(|h| h.peel_to_commit())
-                .map_err(|e| e.to_string())?;
-            let _ = repo.cleanup_state();
-            repo.reset(head_commit.as_object(), ResetType::Hard, None)
-                .map_err(|e| e.to_string())?;
-            return Err(format!(
-                "Merge conflict promoting '{}': resolve manually and retry",
-                branch_name
-            ));
-        }
-
-        let tree_oid = index.write_tree().map_err(|e| e.to_string())?;
-        let tree = repo.find_tree(tree_oid).map_err(|e| e.to_string())?;
-        let sig = repo
-            .signature()
-            .or_else(|_| Signature::now("Central", "central@local"))
-            .map_err(|e| e.to_string())?;
         let head_commit = repo
             .head()
             .and_then(|h| h.peel_to_commit())
             .map_err(|e| e.to_string())?;
-        let message = format!("Merge branch '{}' into workbench session", branch_name);
-        let commit_oid = repo
-            .commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                &message,
-                &tree,
-                &[&head_commit, &branch_commit],
-            )
+
+        if let Some(path) = self.staging_worktrees.lock().unwrap().remove(project_id) {
+            prune_named_worktree(&repo, STAGING_WORKTREE_NAME, &path);
+        } else if let Ok(wt) = repo.find_worktree(STAGING_WORKTREE_NAME) {
+            // Leftover from a crashed previous run this in-memory map never learned about.
+            let mut opts = git2::WorktreePruneOptions::new();
+            opts.working_tree(true);
+            let _ = wt.prune(Some(&mut opts));
+        }
+
+        // Sweep any task worktrees/branches left over from a previous run for this project.
+        {
+            let mut task_worktrees = self.task_worktrees.lock().unwrap();
+            task_worktrees.retain(|(pid, _), handle| {
+                if pid != project_id {
+                    return true;
+                }
+                prune_named_worktree(&repo, &handle.worktree_name, &handle.path);
+                false
+            });
+        }
+        if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
+            let stale: Vec<String> = branches
+                .flatten()
+                .filter_map(|(b, _)| b.name().ok().flatten().map(|n| n.to_string()))
+                .filter(|n| n.starts_with("task/"))
+                .collect();
+            for name in stale {
+                if let Ok(mut b) = repo.find_branch(&name, git2::BranchType::Local) {
+                    let _ = b.delete();
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(
+            repo_root
+                .join(".central")
+                .join("orchestration")
+                .join("tasks"),
+        );
+
+        if let Ok(mut b) = repo.find_branch(STAGING_BRANCH, git2::BranchType::Local) {
+            let _ = b.delete();
+        }
+        repo.branch(STAGING_BRANCH, &head_commit, true)
             .map_err(|e| e.to_string())?;
-        repo.cleanup_state().map_err(|e| e.to_string())?;
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        Ok(())
+    }
+
+    /// Lazily creates (recreating if this task already had one from a bounced retry) an
+    /// isolated worktree for a task on its own `task/<id>` branch, branched off the run's
+    /// current `central/staging` tip. `reset_staging` must have run first.
+    pub fn create_task_worktree(
+        &self,
+        project_id: &str,
+        repo_root: &Path,
+        task_id: &str,
+    ) -> Result<PathBuf, String> {
+        let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+        let staging_commit = repo
+            .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+            .and_then(|b| b.get().peel_to_commit())
+            .map_err(|e| {
+                format!(
+                    "'{}' branch not found; reset_staging must run before create_task_worktree ({})",
+                    STAGING_BRANCH, e
+                )
+            })?;
+
+        let key = (project_id.to_string(), task_id.to_string());
+        if let Some(old) = self.task_worktrees.lock().unwrap().remove(&key) {
+            prune_named_worktree(&repo, &old.worktree_name, &old.path);
+        }
+
+        let branch_name = format!("task/{}", task_id);
+        if let Ok(mut b) = repo.find_branch(&branch_name, git2::BranchType::Local) {
+            let _ = b.delete();
+        }
+        repo.branch(&branch_name, &staging_commit, true)
             .map_err(|e| e.to_string())?;
 
-        Ok(PromoteResult {
-            branch: branch_name,
-            merge_commit_sha: Some(commit_oid.to_string()),
-            fast_forward: false,
-            up_to_date: false,
-        })
+        ensure_central_gitignored(repo_root);
+        let wt_path = repo_root
+            .join(".central")
+            .join("orchestration")
+            .join("tasks")
+            .join(sanitize(task_id));
+        if let Some(parent) = wt_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if wt_path.exists() {
+            let _ = std::fs::remove_dir_all(&wt_path);
+        }
+
+        // Unique worktree name (distinct from the stable `task/<id>` branch name) so a bounced
+        // retry's new registration never collides with a not-yet-pruned previous one.
+        let seq = WORKTREE_SEQ.fetch_add(1, Ordering::SeqCst);
+        let worktree_name = format!("task-{}-{}-{}", sanitize(task_id), timestamp_millis(), seq);
+        let branch_ref = repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .map_err(|e| e.to_string())?
+            .into_reference();
+        let mut wt_opts = git2::WorktreeAddOptions::new();
+        wt_opts.reference(Some(&branch_ref));
+        repo.worktree(&worktree_name, &wt_path, Some(&wt_opts))
+            .map_err(|e| e.to_string())?;
+
+        self.task_worktrees.lock().unwrap().insert(
+            key,
+            TaskWorktreeHandle {
+                worktree_name,
+                path: wt_path.clone(),
+            },
+        );
+        Ok(wt_path)
+    }
+
+    /// Resolves a task's active sandbox worktree path, if any, for browsing its contents.
+    pub fn task_worktree_path(&self, project_id: &str, task_id: &str) -> Option<PathBuf> {
+        self.task_worktrees
+            .lock()
+            .unwrap()
+            .get(&(project_id.to_string(), task_id.to_string()))
+            .map(|handle| handle.path.clone())
+    }
+
+    /// Merges a task's `task/<id>` branch into the run's `central/staging` branch without ever
+    /// touching a working directory (git2's `merge_commits` operates purely on the object
+    /// database), so this can run concurrently with other tasks still executing in their own
+    /// worktrees. Fast-forwards when possible; otherwise synthesizes a merge commit. On
+    /// conflict, returns an error naming the conflicted paths and leaves `central/staging`
+    /// untouched — no partial merge state to clean up since nothing was written to disk.
+    pub fn merge_task_into_staging(
+        &self,
+        _project_id: &str,
+        repo_root: &Path,
+        task_id: &str,
+    ) -> Result<(), String> {
+        let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+        let staging_branch = repo
+            .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+            .map_err(|e| e.to_string())?;
+        let staging_ref = staging_branch.get();
+        let staging_refname = staging_ref
+            .name()
+            .ok_or("central/staging ref has no name")?
+            .to_string();
+        let staging_commit = staging_ref.peel_to_commit().map_err(|e| e.to_string())?;
+
+        let branch_name = format!("task/{}", task_id);
+        let task_commit = repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .and_then(|b| b.get().peel_to_commit())
+            .map_err(|e| e.to_string())?;
+
+        let annotated = repo
+            .find_annotated_commit(task_commit.id())
+            .map_err(|e| e.to_string())?;
+        let (analysis, _) = repo
+            .merge_analysis_for_ref(staging_ref, &[&annotated])
+            .map_err(|e| e.to_string())?;
+
+        if analysis.is_up_to_date() {
+            return Ok(());
+        }
+
+        if analysis.is_fast_forward() {
+            repo.reference(
+                &staging_refname,
+                task_commit.id(),
+                true,
+                &format!("orchestration: fast-forward merge {}", branch_name),
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+
+        let mut index = repo
+            .merge_commits(&staging_commit, &task_commit, None)
+            .map_err(|e| e.to_string())?;
+
+        if index.has_conflicts() {
+            let paths: Vec<String> = index
+                .conflicts()
+                .map_err(|e| e.to_string())?
+                .filter_map(|c| c.ok())
+                .filter_map(|c| {
+                    c.our
+                        .or(c.their)
+                        .or(c.ancestor)
+                        .and_then(|e| String::from_utf8(e.path).ok())
+                })
+                .collect();
+            return Err(format!(
+                "Merge conflict merging {} into {}: {}",
+                branch_name,
+                STAGING_BRANCH,
+                paths.join(", ")
+            ));
+        }
+
+        let tree_oid = index.write_tree_to(&repo).map_err(|e| e.to_string())?;
+        let tree = repo.find_tree(tree_oid).map_err(|e| e.to_string())?;
+        let sig = repo
+            .signature()
+            .or_else(|_| Signature::now("Central Orchestrator", "orchestrator@central.local"))
+            .map_err(|e| e.to_string())?;
+        let message = format!("Merge {} into {}", branch_name, STAGING_BRANCH);
+        repo.commit(
+            Some(&staging_refname),
+            &sig,
+            &sig,
+            &message,
+            &tree,
+            &[&staging_commit, &task_commit],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    /// Ensures a working-directory checkout of the run's current `central/staging` tip exists
+    /// (creating it on first use, or fast-checking-out to whatever `central/staging` now points
+    /// at on reuse), for running the project's configured test command against accumulated
+    /// merges.
+    pub fn refresh_staging_worktree(
+        &self,
+        project_id: &str,
+        repo_root: &Path,
+    ) -> Result<PathBuf, String> {
+        {
+            let staging = self.staging_worktrees.lock().unwrap();
+            if let Some(path) = staging.get(project_id) {
+                if path.exists() {
+                    let wt_repo = Repository::open(path).map_err(|e| e.to_string())?;
+                    wt_repo
+                        .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+                        .map_err(|e| e.to_string())?;
+                    return Ok(path.clone());
+                }
+            }
+        }
+
+        let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
+        ensure_central_gitignored(repo_root);
+        let wt_path = repo_root
+            .join(".central")
+            .join("orchestration")
+            .join("staging");
+        if let Some(parent) = wt_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if wt_path.exists() {
+            let _ = std::fs::remove_dir_all(&wt_path);
+        }
+        let branch_ref = repo
+            .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+            .map_err(|e| e.to_string())?
+            .into_reference();
+        let mut wt_opts = git2::WorktreeAddOptions::new();
+        wt_opts.reference(Some(&branch_ref));
+        repo.worktree(STAGING_WORKTREE_NAME, &wt_path, Some(&wt_opts))
+            .map_err(|e| e.to_string())?;
+
+        self.staging_worktrees
+            .lock()
+            .unwrap()
+            .insert(project_id.to_string(), wt_path.clone());
+        Ok(wt_path)
+    }
+
+    /// Merges the run's `central/staging` branch into the project's currently checked out
+    /// branch (HEAD) — the human-gate confirmation and auto-if-green final step. Shares its
+    /// fast-forward/merge/conflict-abort behavior with `promote_session`.
+    pub fn promote_staging_to_main(
+        &self,
+        _project_id: &str,
+        repo_root: &Path,
+    ) -> Result<PromoteResult, String> {
+        merge_branch_into_head(repo_root, STAGING_BRANCH)
     }
 
     /// Tears down a workbench session's git binding: prunes its worktree (Main bindings have
@@ -1822,6 +2154,241 @@ mod tests {
         assert!(state
             .discard_workbench_binding("proj-a", &repo_root, "ghost-session")
             .is_ok());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    // --- Orchestration: staging branch + task worktrees ---
+
+    fn commit_file(repo_path: &Path, name: &str, contents: &str, message: &str) {
+        let repo = Repository::open(repo_path).unwrap();
+        std::fs::write(repo_path.join(name), contents).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(name)).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+            .unwrap();
+    }
+
+    #[test]
+    fn reset_staging_creates_branch_at_current_head() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+
+        state.reset_staging("proj-a", &repo_root).unwrap();
+
+        let repo = Repository::open(&repo_root).unwrap();
+        let staging = repo
+            .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+            .unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(staging.get().peel_to_commit().unwrap().id(), head.id());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn create_task_worktree_branches_off_staging_tip() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+
+        let wt_path = state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+
+        assert!(wt_path.exists());
+        let repo = Repository::open(&repo_root).unwrap();
+        let task_branch = repo
+            .find_branch("task/task-1", git2::BranchType::Local)
+            .unwrap();
+        let staging = repo
+            .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+            .unwrap();
+        assert_eq!(
+            task_branch.get().peel_to_commit().unwrap().id(),
+            staging.get().peel_to_commit().unwrap().id()
+        );
+        assert_eq!(state.task_worktree_path("proj-a", "task-1"), Some(wt_path));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn create_task_worktree_recreates_fresh_on_retry() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+
+        let first = state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+        std::fs::write(first.join("scratch.txt"), "attempt one\n").unwrap();
+
+        // A second call (as happens on a bounce retry) must wipe the previous attempt's edits.
+        let second = state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+
+        assert_eq!(first, second);
+        assert!(!second.join("scratch.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn merge_task_into_staging_fast_forwards() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+        let wt_path = state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+        commit_file(&wt_path, "from-task.txt", "hello\n", "task edit");
+
+        state
+            .merge_task_into_staging("proj-a", &repo_root, "task-1")
+            .unwrap();
+
+        let repo = Repository::open(&repo_root).unwrap();
+        let staging = repo
+            .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+            .unwrap();
+        let task = repo
+            .find_branch("task/task-1", git2::BranchType::Local)
+            .unwrap();
+        assert_eq!(
+            staging.get().peel_to_commit().unwrap().id(),
+            task.get().peel_to_commit().unwrap().id()
+        );
+        // The main workspace itself must be untouched by a staging-only merge.
+        assert!(!repo_root.join("from-task.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn merge_task_into_staging_creates_merge_commit_for_two_disjoint_tasks() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+
+        let wt_a = state
+            .create_task_worktree("proj-a", &repo_root, "task-a")
+            .unwrap();
+        let wt_b = state
+            .create_task_worktree("proj-a", &repo_root, "task-b")
+            .unwrap();
+        commit_file(&wt_a, "a.txt", "a\n", "task a edit");
+        commit_file(&wt_b, "b.txt", "b\n", "task b edit");
+
+        state
+            .merge_task_into_staging("proj-a", &repo_root, "task-a")
+            .unwrap();
+        state
+            .merge_task_into_staging("proj-a", &repo_root, "task-b")
+            .unwrap();
+
+        let staging_path = state
+            .refresh_staging_worktree("proj-a", &repo_root)
+            .unwrap();
+        assert!(staging_path.join("a.txt").exists());
+        assert!(staging_path.join("b.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn merge_task_into_staging_reports_conflict_without_mutating_staging() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+
+        // Both tasks fork from the same original staging tip before either merges, and both
+        // edit the same file — a real race a scope-overlap check would normally prevent, but
+        // exercised directly here to prove the merge itself detects and cleanly rejects it.
+        let wt_a = state
+            .create_task_worktree("proj-a", &repo_root, "task-a")
+            .unwrap();
+        let wt_b = state
+            .create_task_worktree("proj-a", &repo_root, "task-b")
+            .unwrap();
+        commit_file(&wt_a, "README.md", "from task a\n", "task a edits README");
+        commit_file(&wt_b, "README.md", "from task b\n", "task b edits README");
+
+        state
+            .merge_task_into_staging("proj-a", &repo_root, "task-a")
+            .unwrap();
+        let staging_after_a = {
+            let repo = Repository::open(&repo_root).unwrap();
+            let oid = repo
+                .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+                .unwrap()
+                .get()
+                .peel_to_commit()
+                .unwrap()
+                .id();
+            oid
+        };
+
+        let result = state.merge_task_into_staging("proj-a", &repo_root, "task-b");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("README.md"));
+
+        // central/staging must be exactly where it was before the failed merge attempt.
+        let repo = Repository::open(&repo_root).unwrap();
+        let staging_now = repo
+            .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .peel_to_commit()
+            .unwrap()
+            .id();
+        assert_eq!(staging_now, staging_after_a);
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn promote_staging_to_main_fast_forwards_main_workspace() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+        let wt_path = state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+        commit_file(&wt_path, "from-task.txt", "hello\n", "task edit");
+        state
+            .merge_task_into_staging("proj-a", &repo_root, "task-1")
+            .unwrap();
+
+        let result = state.promote_staging_to_main("proj-a", &repo_root).unwrap();
+
+        assert!(result.fast_forward);
+        assert!(repo_root.join("from-task.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn reset_staging_sweeps_previous_runs_task_branches() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+        state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+
+        state.reset_staging("proj-a", &repo_root).unwrap();
+
+        let repo = Repository::open(&repo_root).unwrap();
+        assert!(repo
+            .find_branch("task/task-1", git2::BranchType::Local)
+            .is_err());
+        assert_eq!(state.task_worktree_path("proj-a", "task-1"), None);
 
         let _ = std::fs::remove_dir_all(&repo_root);
     }

@@ -505,6 +505,42 @@ fn write_workbench_sessions_at(
     std::fs::write(workbench_path_at(root, project_id), raw).map_err(|e| e.to_string())
 }
 
+/// Per-project settings for the multi-agent task orchestrator's runs. `test_command` is run by
+/// the integrator after merging each task's branch onto `central/staging`; empty means skipped.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationSettings {
+    #[serde(default)]
+    pub test_command: String,
+}
+
+fn orchestration_settings_path_at(root: &Path, project_id: &str) -> PathBuf {
+    project_dir_at(root, project_id).join("orchestration.json")
+}
+
+fn read_orchestration_settings_at(
+    root: &Path,
+    project_id: &str,
+) -> Result<OrchestrationSettings, String> {
+    let path = orchestration_settings_path_at(root, project_id);
+    if !path.exists() {
+        return Ok(OrchestrationSettings::default());
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+fn write_orchestration_settings_at(
+    root: &Path,
+    project_id: &str,
+    settings: &OrchestrationSettings,
+) -> Result<(), String> {
+    let dir = project_dir_at(root, project_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    std::fs::write(orchestration_settings_path_at(root, project_id), raw).map_err(|e| e.to_string())
+}
+
 fn default_projects_base(app: &AppHandle) -> Result<PathBuf, String> {
     let documents_dir = app.path().document_dir().map_err(|e| e.to_string())?;
     let data_dir = app_data_dir(app)?;
@@ -672,6 +708,23 @@ pub fn save_workbench_sessions(
     app: AppHandle,
 ) -> Result<(), String> {
     write_workbench_sessions_at(&projects_root(&app)?, &project_id, &sessions)
+}
+
+#[tauri::command]
+pub fn get_orchestration_settings(
+    project_id: String,
+    app: AppHandle,
+) -> Result<OrchestrationSettings, String> {
+    read_orchestration_settings_at(&projects_root(&app)?, &project_id)
+}
+
+#[tauri::command]
+pub fn save_orchestration_settings(
+    project_id: String,
+    settings: OrchestrationSettings,
+    app: AppHandle,
+) -> Result<(), String> {
+    write_orchestration_settings_at(&projects_root(&app)?, &project_id, &settings)
 }
 
 #[cfg(test)]
@@ -1105,6 +1158,39 @@ mod tests {
                 branch: "review-branch".to_string()
             }
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn get_orchestration_settings_defaults_to_empty_test_command() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Orchestration Defaults");
+
+        let settings = read_orchestration_settings_at(&root, &meta.id).unwrap();
+        assert_eq!(settings.test_command, "");
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
+    }
+
+    #[test]
+    fn save_and_load_orchestration_settings_roundtrips() {
+        let root = temp_root();
+        let meta = create_test_project(&root, "Orchestration Roundtrip");
+
+        write_orchestration_settings_at(
+            &root,
+            &meta.id,
+            &OrchestrationSettings {
+                test_command: "pnpm test".to_string(),
+            },
+        )
+        .unwrap();
+
+        let loaded = read_orchestration_settings_at(&root, &meta.id).unwrap();
+        assert_eq!(loaded.test_command, "pnpm test");
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&meta.workspace_path);
