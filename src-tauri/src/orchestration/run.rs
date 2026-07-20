@@ -37,24 +37,30 @@ fn new_run_id() -> String {
 
 // --- Events ---
 
+// `rename_all` on the enum itself only camelCases the variant tag ("TaskState" -> "taskState");
+// it does NOT cascade into a struct variant's own field names, so each variant with named
+// fields needs its own `rename_all` too, or those fields serialize as their literal snake_case
+// Rust names (bit us once already: task_id/retry_count reached the frontend un-renamed, so
+// `event.taskId` was always undefined there).
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
+#[serde(tag = "type")]
 pub enum RunEvent {
+    #[serde(rename = "taskState", rename_all = "camelCase")]
     TaskState {
         task_id: String,
         state: TaskState,
         retry_count: u32,
         message: Option<String>,
     },
+    #[serde(rename = "runComplete", rename_all = "camelCase")]
     RunComplete {
         done: usize,
         failed: usize,
         awaiting_confirmation: bool,
         auto_promoted: bool,
     },
-    RunFailed {
-        message: String,
-    },
+    #[serde(rename = "runFailed")]
+    RunFailed { message: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -66,7 +72,7 @@ struct OrchestrationEventPayload {
 }
 
 fn emit_run_event(app: &AppHandle, run_id: &str, project_id: &str, event: RunEvent) {
-    let _ = app.emit(
+    let result = app.emit(
         "orchestration-event",
         OrchestrationEventPayload {
             run_id: run_id.to_string(),
@@ -74,6 +80,12 @@ fn emit_run_event(app: &AppHandle, run_id: &str, project_id: &str, event: RunEve
             event,
         },
     );
+    if let Err(e) = result {
+        eprintln!(
+            "[event] run={} FAILED to emit orchestration-event: {}",
+            run_id, e
+        );
+    }
 }
 
 async fn set_task_state(
@@ -84,6 +96,10 @@ async fn set_task_state(
     retry_count: u32,
     message: Option<String>,
 ) {
+    eprintln!(
+        "[event] run={} task={} -> {:?} (retry={}, message={:?})",
+        handle.run_id, task_id, new_state, retry_count, message
+    );
     handle
         .states
         .lock()
@@ -190,6 +206,21 @@ pub async fn start_orchestration_run(
     }
 
     let run_id = new_run_id();
+    eprintln!(
+        "[orchestration] start_orchestration_run run={} project={} adapter={} tasks={} max_parallel={} retry_limit={}",
+        run_id,
+        request.project_id,
+        request.adapter_id,
+        request.tasks.len(),
+        request.max_parallel,
+        request.retry_limit
+    );
+    for t in &request.tasks {
+        eprintln!(
+            "[orchestration]   task id={:?} title={:?} scopes={:?} dependsOn={:?}",
+            t.id, t.title, t.file_scopes, t.depends_on
+        );
+    }
     state
         .active_project_runs
         .lock()
@@ -219,7 +250,16 @@ pub async fn start_orchestration_run(
         .insert(run_id.clone(), handle.clone());
 
     let app_for_run = app.clone();
+    let run_id_for_spawn = run_id.clone();
+    eprintln!(
+        "[orchestration] spawning run_orchestration run={}",
+        run_id_for_spawn
+    );
     tauri::async_runtime::spawn(async move {
+        eprintln!(
+            "[orchestration] run_orchestration task started run={}",
+            run_id_for_spawn
+        );
         run_orchestration(
             app_for_run,
             handle,
@@ -230,6 +270,10 @@ pub async fn start_orchestration_run(
             request.test_command,
         )
         .await;
+        eprintln!(
+            "[orchestration] run_orchestration task finished run={}",
+            run_id_for_spawn
+        );
     });
 
     Ok(run_id)
@@ -295,8 +339,14 @@ async fn run_orchestration(
         tx,
     )
     .await;
+    eprintln!("[orchestration] run={} dispatcher returned", handle.run_id);
 
-    let _ = integrator.await;
+    let integrator_result = integrator.await;
+    eprintln!(
+        "[orchestration] run={} integrator joined, panicked={}",
+        handle.run_id,
+        integrator_result.is_err()
+    );
 
     finalize_run(&app, &handle).await;
 
@@ -316,9 +366,15 @@ async fn run_dispatcher(
     tx: mpsc::Sender<TaskCompletion>,
 ) {
     let mut task_futures: JoinSet<()> = JoinSet::new();
+    eprintln!(
+        "[dispatcher] run={} entering loop with {} tasks, max_parallel={}",
+        handle.run_id,
+        handle.tasks.len(),
+        max_parallel
+    );
 
     loop {
-        let (runnable, all_terminal, has_active) = {
+        let (runnable, all_terminal, has_active, snapshot) = {
             let states = handle.states.lock().await;
             let runnable = runnable_tasks(&handle.tasks, &states, max_parallel);
             let all_terminal = handle.tasks.iter().all(|t| {
@@ -330,8 +386,27 @@ async fn run_dispatcher(
             let has_active = states
                 .values()
                 .any(|s| matches!(s, TaskState::Running | TaskState::Merging));
-            (runnable, all_terminal, has_active)
+            let snapshot: Vec<(String, TaskState)> = handle
+                .tasks
+                .iter()
+                .map(|t| {
+                    (
+                        t.id.clone(),
+                        states.get(&t.id).copied().unwrap_or(TaskState::Pending),
+                    )
+                })
+                .collect();
+            (runnable, all_terminal, has_active, snapshot)
         };
+        eprintln!(
+            "[dispatcher] run={} tick: states={:?} runnable={:?} all_terminal={} has_active={} in_flight={}",
+            handle.run_id,
+            snapshot,
+            runnable,
+            all_terminal,
+            has_active,
+            task_futures.len()
+        );
 
         if !runnable.is_empty() {
             {
@@ -400,6 +475,7 @@ async fn run_single_task(
     agent_options: AgentLaunchOptions,
     tx: mpsc::Sender<TaskCompletion>,
 ) {
+    eprintln!("[task {}] run={} starting", task_id, handle.run_id);
     let retry_count = *handle.retry_counts.lock().await.get(&task_id).unwrap_or(&0);
     set_task_state(
         &app,
@@ -416,6 +492,7 @@ async fn run_single_task(
         &handle.repo_root,
         &task_id,
     );
+    eprintln!("[task {}] create_task_worktree -> {:?}", task_id, worktree);
     let worktree = match worktree {
         Ok(p) => p,
         Err(e) => {
@@ -457,6 +534,10 @@ async fn run_single_task(
         .cloned()
         .unwrap_or_default();
     let node_id = format!("orchestration-{}-{}", handle.run_id, task_id);
+    eprintln!(
+        "[task {}] adapter={} cwd={:?} command={:?}",
+        task_id, adapter_id, worktree, command
+    );
 
     let result = crate::graph_runner::run_shell_command_raw(
         &app,
@@ -466,6 +547,12 @@ async fn run_single_task(
         &[("CENTRAL_PIPELINE_INPUT", prompt.as_str())],
     )
     .await;
+    eprintln!(
+        "[task {}] run_shell_command_raw -> ok={} exit={:?}",
+        task_id,
+        result.is_ok(),
+        result.as_ref().ok().map(|(_, code)| *code)
+    );
 
     match result {
         Ok((_output, 0)) => {
@@ -514,11 +601,20 @@ async fn run_integrator(
     retry_limit: u32,
     test_command: Option<String>,
 ) {
+    eprintln!("[integrator] run={} waiting for completions", handle.run_id);
     while let Some(TaskCompletion { task_id }) = rx.recv().await {
+        eprintln!(
+            "[integrator] run={} received completion for task={}",
+            handle.run_id, task_id
+        );
         let merge_result = app.state::<GitEngineState>().merge_task_into_staging(
             &handle.project_id,
             &handle.repo_root,
             &task_id,
+        );
+        eprintln!(
+            "[integrator] task={} merge_task_into_staging -> {:?}",
+            task_id, merge_result
         );
 
         if let Err(e) = merge_result {
@@ -696,4 +792,55 @@ async fn finalize_run(app: &AppHandle, handle: &Arc<RunHandle>) {
             auto_promoted,
         },
     );
+}
+
+#[cfg(test)]
+mod event_serialization_tests {
+    use super::*;
+
+    // Regression test: `rename_all` on the enum itself only camelCases the variant tag, not a
+    // struct variant's own fields — this shape is exactly what the frontend's TS types
+    // (src/lib/orchestrator/runEvents.ts) deserialize against, so a mismatch here silently
+    // breaks every taskId-keyed lookup client-side without any error on either end.
+    #[test]
+    fn task_state_event_serializes_as_camel_case() {
+        let event = RunEvent::TaskState {
+            task_id: "string-formatter".to_string(),
+            state: TaskState::Running,
+            retry_count: 1,
+            message: None,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "taskState");
+        assert_eq!(json["taskId"], "string-formatter");
+        assert_eq!(json["state"], "running");
+        assert_eq!(json["retryCount"], 1);
+        assert!(json.get("task_id").is_none());
+        assert!(json.get("retry_count").is_none());
+    }
+
+    #[test]
+    fn run_complete_event_serializes_as_camel_case() {
+        let event = RunEvent::RunComplete {
+            done: 3,
+            failed: 1,
+            awaiting_confirmation: true,
+            auto_promoted: false,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "runComplete");
+        assert_eq!(json["awaitingConfirmation"], true);
+        assert_eq!(json["autoPromoted"], false);
+        assert!(json.get("awaiting_confirmation").is_none());
+    }
+
+    #[test]
+    fn run_failed_event_serializes_with_camel_case_tag() {
+        let event = RunEvent::RunFailed {
+            message: "boom".to_string(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "runFailed");
+        assert_eq!(json["message"], "boom");
+    }
 }

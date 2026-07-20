@@ -62,7 +62,19 @@ function applyEvent(run: Run, event: OrchestrationEventPayload["event"]): Run {
   switch (event.type) {
     case "taskState": {
       const existing = run.tasks[event.taskId];
-      if (!existing) return run;
+      if (!existing) {
+        console.debug(
+          "[runStore] taskState NO MATCH — taskId=%s not in tasks keys=%s",
+          JSON.stringify(event.taskId),
+          JSON.stringify(Object.keys(run.tasks))
+        );
+        return run;
+      }
+      console.debug(
+        "[runStore] taskState MATCH — taskId=%s newState=%s",
+        JSON.stringify(event.taskId),
+        JSON.stringify(event.state)
+      );
       return {
         ...run,
         tasks: {
@@ -101,17 +113,25 @@ export const useRunStore = create<RunState>((set, get) => ({
   ensureListener: () => {
     if (get().listenerStarted) return;
     set({ listenerStarted: true });
-    void listen<OrchestrationEventPayload>("orchestration-event", (e) => {
+    console.debug("[runStore] registering orchestration-event listener");
+    listen<OrchestrationEventPayload>("orchestration-event", (e) => {
       const { runId, event } = e.payload;
+      console.debug("[runStore] received event run=%s payload=%s", runId, JSON.stringify(event));
       set((state) => {
         const run = state.runs[runId];
         if (!run) {
+          console.debug("[runStore] run not yet registered, buffering", runId, event.type);
           const buffered = state.pendingEvents[runId] ?? [];
           return { pendingEvents: { ...state.pendingEvents, [runId]: [...buffered, event] } };
         }
+        console.debug("[runStore] applying event to run", runId, event.type);
         return { runs: { ...state.runs, [runId]: applyEvent(run, event) } };
       });
-    }).catch((err) => console.error("Failed to listen for orchestration events:", err));
+    })
+      .then((unlisten) => {
+        console.debug("[runStore] orchestration-event listener registered", typeof unlisten);
+      })
+      .catch((err) => console.error("Failed to listen for orchestration events:", err));
   },
 
   startRun: async (opts) => {
@@ -133,6 +153,11 @@ export const useRunStore = create<RunState>((set, get) => ({
     for (const task of opts.tasks) {
       tasks[task.id] = { task, state: "pending", retryCount: 0, message: null };
     }
+    console.debug(
+      "[runStore] seeding run=%s with task keys=%s",
+      runId,
+      JSON.stringify(Object.keys(tasks))
+    );
     const run: Run = {
       runId,
       projectId: opts.projectId,
