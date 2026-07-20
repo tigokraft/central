@@ -4,6 +4,7 @@ import { useCanvasStore } from "../store/canvasStore";
 import { useAppViewStore } from "../store/appViewStore";
 import ProviderSettingsModal from "./ProviderSettingsModal";
 import OrchestratorProfilesModal from "./OrchestratorProfilesModal";
+import ProjectViewSwitcher from "./ProjectViewSwitcher";
 import Button from "./ui/Button";
 
 interface TopbarProps {
@@ -34,6 +35,8 @@ export default function Topbar({ showMinimap, setShowMinimap }: TopbarProps) {
         <ArrowLeft size={13} />
         Home
       </button>
+
+      <ProjectViewSwitcher />
 
       {/* Center Action */}
       <div>

@@ -2,7 +2,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -137,6 +137,9 @@ pub fn spawn_pty(
     shell: Option<String>,
     cols: u16,
     rows: u16,
+    // Overrides the default cwd (the active project's workspace root) — used by workbench
+    // sessions bound to a branch's own worktree rather than the main workspace.
+    cwd: Option<String>,
     state: State<'_, PtyManager>,
     app_handle: AppHandle,
 ) -> Result<(), String> {
@@ -148,7 +151,9 @@ pub fn spawn_pty(
         }
     });
 
-    let cwd = crate::git_engine::resolve_repo_root(&app_handle);
+    let cwd = cwd
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::git_engine::resolve_repo_root(&app_handle));
     let cmd = build_pty_command(&shell_name, &cwd);
 
     spawn_pty_command(

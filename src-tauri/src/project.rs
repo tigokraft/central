@@ -466,6 +466,45 @@ fn load_pipeline_graph_at(
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
+/// Entry in a project's workbench manifest: persists everything needed to restore a session's
+/// card layout on reopen (label, agent, git binding) but never the live PTY/xterm state,
+/// which is transient and only meaningful while the app process is running.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbenchSessionMeta {
+    pub id: String,
+    pub label: String,
+    pub agent_id: Option<String>,
+    pub binding: crate::git_engine::WorkbenchBinding,
+}
+
+fn workbench_path_at(root: &Path, project_id: &str) -> PathBuf {
+    project_dir_at(root, project_id).join("workbench.json")
+}
+
+fn read_workbench_sessions_at(
+    root: &Path,
+    project_id: &str,
+) -> Result<Vec<WorkbenchSessionMeta>, String> {
+    let path = workbench_path_at(root, project_id);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+fn write_workbench_sessions_at(
+    root: &Path,
+    project_id: &str,
+    sessions: &[WorkbenchSessionMeta],
+) -> Result<(), String> {
+    let dir = project_dir_at(root, project_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let raw = serde_json::to_string_pretty(sessions).map_err(|e| e.to_string())?;
+    std::fs::write(workbench_path_at(root, project_id), raw).map_err(|e| e.to_string())
+}
+
 fn default_projects_base(app: &AppHandle) -> Result<PathBuf, String> {
     let documents_dir = app.path().document_dir().map_err(|e| e.to_string())?;
     let data_dir = app_data_dir(app)?;
@@ -616,6 +655,23 @@ pub fn load_pipeline_graph(
     app: AppHandle,
 ) -> Result<Option<serde_json::Value>, String> {
     load_pipeline_graph_at(&projects_root(&app)?, &project_id, &pipeline_id)
+}
+
+#[tauri::command]
+pub fn list_workbench_sessions(
+    project_id: String,
+    app: AppHandle,
+) -> Result<Vec<WorkbenchSessionMeta>, String> {
+    read_workbench_sessions_at(&projects_root(&app)?, &project_id)
+}
+
+#[tauri::command]
+pub fn save_workbench_sessions(
+    project_id: String,
+    sessions: Vec<WorkbenchSessionMeta>,
+    app: AppHandle,
+) -> Result<(), String> {
+    write_workbench_sessions_at(&projects_root(&app)?, &project_id, &sessions)
 }
 
 #[cfg(test)]
@@ -1005,5 +1061,52 @@ mod tests {
         assert_eq!(resolved, PathBuf::from("/custom/location"));
 
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn list_workbench_sessions_returns_empty_when_missing() {
+        let root = temp_root();
+        let result = read_workbench_sessions_at(&root, "does-not-exist").unwrap();
+        assert!(result.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn save_and_load_workbench_sessions_roundtrips() {
+        use crate::git_engine::WorkbenchBinding;
+
+        let root = temp_root();
+        let meta = create_test_project(&root, "Workbench Roundtrip");
+
+        let sessions = vec![
+            WorkbenchSessionMeta {
+                id: "sess-1".to_string(),
+                label: "Coder".to_string(),
+                agent_id: Some("claude-code".to_string()),
+                binding: WorkbenchBinding::Main,
+            },
+            WorkbenchSessionMeta {
+                id: "sess-2".to_string(),
+                label: "Reviewer".to_string(),
+                agent_id: None,
+                binding: WorkbenchBinding::New {
+                    branch: "review-branch".to_string(),
+                },
+            },
+        ];
+        write_workbench_sessions_at(&root, &meta.id, &sessions).unwrap();
+
+        let loaded = read_workbench_sessions_at(&root, &meta.id).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "sess-1");
+        assert_eq!(
+            loaded[1].binding,
+            WorkbenchBinding::New {
+                branch: "review-branch".to_string()
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&meta.workspace_path);
     }
 }
