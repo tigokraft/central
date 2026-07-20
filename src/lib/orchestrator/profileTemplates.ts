@@ -53,10 +53,10 @@ export const PROFILE_TEMPLATES: OrchestratorProfileTemplate[] = [
     label: "Antigravity CLI",
     description:
       "Google's Antigravity CLI (`agy`), the successor to Gemini CLI's individual free tier. " +
-      "Least-verified template in this set — it's a very recent product and this -p flag/one-" +
-      "shot behavior is a guess by analogy with Gemini CLI, not confirmed. Check `agy --help` " +
-      "before relying on this, especially for a headless-mode folder-trust flag if it prompts " +
-      "for one the way Gemini CLI used to.",
+      "-p runs a single non-interactive prompt (confirmed via `agy --help`). Like Claude Code, " +
+      "it won't actually write/edit/run anything unattended without --dangerously-skip-" +
+      "permissions in Extra Args — add that deliberately once you're ready for it to act, not " +
+      "just describe what it would do.",
     adapterId: "generic-command",
     launchOptions: blankLaunchOptions(`agy -p ${PROMPT_PLACEHOLDER}`),
   },
