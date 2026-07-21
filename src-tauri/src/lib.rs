@@ -4,6 +4,7 @@ mod git_engine;
 mod graph_runner;
 mod mcp;
 pub mod memory;
+mod orchestration;
 mod project;
 mod pty_manager;
 mod workspace_fs;
@@ -46,6 +47,7 @@ pub fn run() {
         .manage(ProjectState::default())
         .manage(workspace_fs::WorkspaceWatcherState::default())
         .manage(agents::AgentRegistry::default())
+        .manage(orchestration::OrchestrationState::default())
         .setup(|_app| {
             #[cfg(target_os = "windows")]
             {
@@ -69,6 +71,8 @@ pub fn run() {
             agents::launch_agent_session,
             agents::send_agent_input,
             agents::build_task_command_line,
+            orchestration::run::start_orchestration_run,
+            orchestration::run::confirm_run_promotion,
             memory::engine::create_memory_record,
             memory::engine::query_memory_graph,
             memory::engine::list_aimem_facts,
@@ -106,6 +110,8 @@ pub fn run() {
             project::pick_folder,
             project::list_workbench_sessions,
             project::save_workbench_sessions,
+            project::get_orchestration_settings,
+            project::save_orchestration_settings,
             workspace_fs::list_dir,
             workspace_fs::read_file,
             workspace_fs::list_worktree_dir,

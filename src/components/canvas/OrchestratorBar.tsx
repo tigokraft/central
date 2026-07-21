@@ -2,6 +2,8 @@ import { useEffect, useState, FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sparkles, ArrowRight, Loader2 } from "lucide-react";
 import { useCanvasStore, CanvasNode, flushActivePipelineSave } from "../../store/canvasStore";
+import { useAppViewStore } from "../../store/appViewStore";
+import { useRunStore } from "../../store/runStore";
 import { parseOrchestratorGoal, titleCase, type OrchestratorPlan } from "../../lib/orchestratorParser";
 import {
   useOrchestratorProfileStore,
@@ -10,8 +12,9 @@ import {
   type OrchestratorProfile,
 } from "../../store/orchestratorProfileStore";
 import { runAgentHeadless, buildTaskCommandLine } from "../../lib/orchestrator/agentRunner";
-import { parseTaskListJson } from "../../lib/orchestrator/schema";
+import { parseTaskListJson, type OrchestratorTask } from "../../lib/orchestrator/schema";
 import { materializeTaskGraph } from "../../lib/orchestrator/materialize";
+import type { MergePolicy } from "../../lib/orchestrator/runEvents";
 import { cn } from "../../lib/cn";
 import Button from "../ui/Button";
 
@@ -23,7 +26,7 @@ const FRAME_SIDE_PADDING = 40;
 const FRAME_TOP_PADDING = 70;
 const FRAME_BOTTOM_MARGIN = 50;
 
-type OrchestratorMode = "design" | "run";
+type OrchestratorMode = "design" | "run" | "orchestrate";
 
 // Finds an empty spot to the right of every existing node so successive orchestrator runs
 // never stack their generated plans on top of one another.
@@ -101,25 +104,19 @@ async function isAdapterAvailable(adapterId: string): Promise<boolean> {
   }
 }
 
-// Runs the Planner -> Decomposer flow through the given profile's adapter, materializes the
-// resulting task graph as a brand new pipeline, and switches the canvas into it. In "run" mode,
-// immediately executes it via the existing graph runner. Falls back to the regex-generated plan
-// (unchanged behavior) if the Decomposer's JSON still fails to parse after one retry.
-async function runLlmFlow(
+type DecomposedPlan = { tasks: OrchestratorTask[] } | { error: string };
+
+// Runs the Planner -> Decomposer flow through the given profile's adapter, retrying the
+// Decomposer once with its own parse error folded back into the prompt if its JSON doesn't
+// parse. Shared by the canvas-materializing flow below and the direct-to-orchestrator flow,
+// since both need the exact same "goal -> plan -> task list" pipeline and only diverge in what
+// they do with the resulting tasks.
+async function runPlannerAndDecomposer(
   profile: OrchestratorProfile,
   goal: string,
-  regexPlan: OrchestratorPlan,
-  mode: OrchestratorMode
-): Promise<string | null> {
-  const activeProjectId = useCanvasStore.getState().activeProjectId;
-  if (!activeProjectId) return "No active project.";
-
-  const projectMeta = await invoke<{ workspacePath: string }>("ensure_project_workspace", {
-    projectId: activeProjectId,
-  });
-  const cwd = projectMeta.workspacePath;
-  const optionsPayload = toAgentLaunchOptionsPayload(profile.launchOptions);
-
+  cwd: string,
+  optionsPayload: ReturnType<typeof toAgentLaunchOptionsPayload>
+): Promise<DecomposedPlan> {
   const plannerResult = await runAgentHeadless(
     profile.adapterId,
     `${profile.plannerPrompt}\n\nGoal:\n${goal}`,
@@ -129,8 +126,7 @@ async function runLlmFlow(
   console.info("[orchestrator] planner output:", plannerResult.text);
 
   if (!plannerResult.text.trim()) {
-    applyPlanToCurrentPipeline(regexPlan);
-    return "Planner returned no output; used the offline parser instead.";
+    return { error: "Planner returned no output" };
   }
 
   const decomposerPrompt = (extra?: string) =>
@@ -149,13 +145,40 @@ async function runLlmFlow(
 
   if (!parsed.ok) {
     console.error("[orchestrator] decomposer gave up after retry:", parsed.error);
+    return { error: `Decomposer failed to produce a valid task list (${parsed.error})` };
+  }
+
+  return { tasks: parsed.tasks };
+}
+
+// Runs the Planner -> Decomposer flow, materializes the resulting task graph as a brand new
+// pipeline, and switches the canvas into it. In "run" mode, immediately executes it via the
+// existing graph runner. Falls back to the regex-generated plan (unchanged behavior) if the
+// Decomposer's JSON still fails to parse after one retry.
+async function runLlmFlow(
+  profile: OrchestratorProfile,
+  goal: string,
+  regexPlan: OrchestratorPlan,
+  mode: OrchestratorMode
+): Promise<string | null> {
+  const activeProjectId = useCanvasStore.getState().activeProjectId;
+  if (!activeProjectId) return "No active project.";
+
+  const projectMeta = await invoke<{ workspacePath: string }>("ensure_project_workspace", {
+    projectId: activeProjectId,
+  });
+  const cwd = projectMeta.workspacePath;
+  const optionsPayload = toAgentLaunchOptionsPayload(profile.launchOptions);
+
+  const decomposed = await runPlannerAndDecomposer(profile, goal, cwd, optionsPayload);
+  if ("error" in decomposed) {
     applyPlanToCurrentPipeline(regexPlan);
-    return `Decomposer failed to produce a valid task list (${parsed.error}); used the offline parser instead.`;
+    return `${decomposed.error}; used the offline parser instead.`;
   }
 
   const taskCommand = await buildTaskCommandLine(profile.adapterId, optionsPayload);
   const frameId = `actionFrameNode-${crypto.randomUUID()}`;
-  const { nodes, edges } = materializeTaskGraph(parsed.tasks, titleCase(goal), frameId, taskCommand);
+  const { nodes, edges } = materializeTaskGraph(decomposed.tasks, titleCase(goal), frameId, taskCommand);
   const graph = { nodes, edges, viewport: { x: 0, y: 0, zoom: 1 } };
 
   const meta = await invoke<{ id: string }>("create_pipeline", {
@@ -175,10 +198,62 @@ async function runLlmFlow(
   return null;
 }
 
+// Runs the same Planner -> Decomposer flow, but hands the resulting task list straight to the
+// multi-agent orchestrator (src-tauri/src/orchestration) instead of materializing canvas nodes —
+// each task gets its own worktree/branch and runs in parallel where scopes allow, with a
+// sequential integrator merging finished work onto a shared staging branch. Switches into the
+// Runs view so the caller can watch it live.
+async function runOrchestrationFlow(
+  profile: OrchestratorProfile,
+  goal: string,
+  regexPlan: OrchestratorPlan,
+  mergePolicy: MergePolicy
+): Promise<string | null> {
+  const activeProjectId = useCanvasStore.getState().activeProjectId;
+  if (!activeProjectId) return "No active project.";
+
+  const projectMeta = await invoke<{ workspacePath: string }>("ensure_project_workspace", {
+    projectId: activeProjectId,
+  });
+  const cwd = projectMeta.workspacePath;
+  const optionsPayload = toAgentLaunchOptionsPayload(profile.launchOptions);
+
+  const decomposed = await runPlannerAndDecomposer(profile, goal, cwd, optionsPayload);
+  if ("error" in decomposed) {
+    applyPlanToCurrentPipeline(regexPlan);
+    return `${decomposed.error}; used the offline parser instead.`;
+  }
+
+  let testCommand = "";
+  try {
+    const settings = await invoke<{ testCommand: string }>("get_orchestration_settings", {
+      projectId: activeProjectId,
+    });
+    testCommand = settings.testCommand;
+  } catch (err) {
+    console.error("Failed to load orchestration settings:", err);
+  }
+
+  await useRunStore.getState().startRun({
+    projectId: activeProjectId,
+    tasks: decomposed.tasks,
+    adapterId: profile.adapterId,
+    options: optionsPayload,
+    maxParallel: 3,
+    retryLimit: 2,
+    mergePolicy,
+    testCommand,
+  });
+
+  useAppViewStore.getState().setProjectView("runs");
+  return null;
+}
+
 export default function OrchestratorBar() {
   const [value, setValue] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [mode, setMode] = useState<OrchestratorMode>("design");
+  const [mergePolicy, setMergePolicy] = useState<MergePolicy>("humanGate");
   const [overrideProfileId, setOverrideProfileId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -217,7 +292,10 @@ export default function OrchestratorBar() {
         return;
       }
 
-      const fallbackReason = await runLlmFlow(effectiveProfile, goal, plan, mode);
+      const fallbackReason =
+        mode === "orchestrate"
+          ? await runOrchestrationFlow(effectiveProfile, goal, plan, mergePolicy)
+          : await runLlmFlow(effectiveProfile, goal, plan, mode);
       if (fallbackReason) setStatusMessage(fallbackReason);
       setValue("");
     } catch (err) {
@@ -265,7 +343,7 @@ export default function OrchestratorBar() {
         )}
 
         <div className="hidden sm:flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 shrink-0">
-          {(["design", "run"] as const).map((m) => (
+          {(["design", "run", "orchestrate"] as const).map((m) => (
             <button
               key={m}
               type="button"
@@ -280,6 +358,18 @@ export default function OrchestratorBar() {
           ))}
         </div>
 
+        {mode === "orchestrate" && (
+          <select
+            value={mergePolicy}
+            onChange={(e) => setMergePolicy(e.target.value as MergePolicy)}
+            title="How the run's staging branch reaches main"
+            className="hidden md:block shrink-0 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono focus:outline-none focus:border-emerald-500/50 cursor-pointer"
+          >
+            <option value="humanGate">Human-gate</option>
+            <option value="autoIfGreen">Auto if green</option>
+          </select>
+        )}
+
         <Button
           type="submit"
           variant="primary"
@@ -287,7 +377,7 @@ export default function OrchestratorBar() {
           className="tracking-wide shrink-0"
         >
           {isRunning ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
-          {mode === "run" ? "Run" : "Design"}
+          {mode === "run" ? "Run" : mode === "orchestrate" ? "Orchestrate" : "Design"}
         </Button>
       </form>
       {statusMessage && (

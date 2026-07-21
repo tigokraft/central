@@ -92,6 +92,10 @@ fn canonical_workspace_root(app: &AppHandle, project_id: &str) -> Result<PathBuf
 // Same idea as canonical_workspace_root, but rooted at a node's isolated sandbox worktree
 // (see GitEngineState::ensure_worktree) instead of the project's main workspace, so its
 // contents can be browsed read-only without exposing every workspace_fs command against it.
+// Also resolves an orchestration task's sandbox worktree (see
+// GitEngineState::create_task_worktree) under the same id — pipeline node ids and orchestration
+// task ids live in disjoint namespaces, so trying the pipeline-node map first and falling back
+// to the task map is unambiguous and lets the same commands/UI browse either kind of sandbox.
 fn canonical_worktree_root(
     app: &AppHandle,
     project_id: &str,
@@ -100,6 +104,7 @@ fn canonical_worktree_root(
     let git_state = app.state::<crate::git_engine::GitEngineState>();
     let path = git_state
         .worktree_path(project_id, node_id)
+        .or_else(|| git_state.task_worktree_path(project_id, node_id))
         .ok_or_else(|| format!("No active worktree for node '{node_id}'"))?;
     path.canonicalize().map_err(|e| e.to_string())
 }

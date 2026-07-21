@@ -1,8 +1,9 @@
-import { LayoutGrid, Users } from "lucide-react";
+import { LayoutGrid, Users, GitMerge } from "lucide-react";
 import { useAppViewStore, type ProjectView } from "../store/appViewStore";
 
-// Segmented toggle between a project's pipeline canvas and its team workbench. Shared by
-// both workspace shells' headers so switching is available no matter which one is showing.
+// Segmented toggle between a project's pipeline canvas, its team workbench, and its
+// orchestrator runs. Shared by every workspace shell's header so switching is available no
+// matter which one is showing.
 export default function ProjectViewSwitcher() {
   const projectView = useAppViewStore((state) => state.projectView);
   const setProjectView = useAppViewStore((state) => state.setProjectView);
@@ -10,6 +11,7 @@ export default function ProjectViewSwitcher() {
   const options: { value: ProjectView; label: string; icon: typeof LayoutGrid }[] = [
     { value: "canvas", label: "Canvas", icon: LayoutGrid },
     { value: "workbench", label: "Workbench", icon: Users },
+    { value: "runs", label: "Runs", icon: GitMerge },
   ];
 
   return (
