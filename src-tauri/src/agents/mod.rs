@@ -308,7 +308,7 @@ mod command_line_tests {
         );
         assert_eq!(
             render_launch_as_shell_command(&launch, &HashMap::new()),
-            "'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose'"
+            "'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose' '--dangerously-skip-permissions'"
         );
     }
 
@@ -327,7 +327,7 @@ mod command_line_tests {
         );
         assert_eq!(
             render_launch_as_shell_command(&launch, &HashMap::new()),
-            "'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose' '--model' 'sonnet' '--effort' 'high'"
+            "'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose' '--dangerously-skip-permissions' '--model' 'sonnet' '--effort' 'high'"
         );
     }
 
@@ -348,7 +348,7 @@ mod command_line_tests {
         ]);
         assert_eq!(
             render_launch_as_shell_command(&launch, &env),
-            "ANTHROPIC_LOG='debug' CLAUDE_CODE_OAUTH_TOKEN='it'\\''s a token' 'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose'"
+            "ANTHROPIC_LOG='debug' CLAUDE_CODE_OAUTH_TOKEN='it'\\''s a token' 'claude' '-p' \"$CENTRAL_PIPELINE_INPUT\" '--output-format' 'stream-json' '--verbose' '--dangerously-skip-permissions'"
         );
     }
 

@@ -32,6 +32,12 @@ impl AgentAdapter for ClaudeCodeAdapter {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--verbose".to_string(),
+            // Headless `-p` mode has no TTY to approve Edit/Write/Bash tool calls against, so
+            // without this every invocation silently no-ops on file edits while still reporting
+            // a clean success result. Safe here specifically because every launch already runs
+            // inside an isolated git worktree sandbox (a node's or task's own throwaway branch),
+            // never the user's actual working directory.
+            "--dangerously-skip-permissions".to_string(),
         ];
         if let Some(model) = &options.model {
             args.push("--model".to_string());
@@ -243,7 +249,8 @@ mod tests {
                 "say hi",
                 "--output-format",
                 "stream-json",
-                "--verbose"
+                "--verbose",
+                "--dangerously-skip-permissions"
             ]
         );
         assert_eq!(launch.stdin_prompt, None);
@@ -266,6 +273,7 @@ mod tests {
                 "--output-format",
                 "stream-json",
                 "--verbose",
+                "--dangerously-skip-permissions",
                 "--model",
                 "sonnet",
                 "--effort",
