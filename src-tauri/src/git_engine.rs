@@ -807,6 +807,57 @@ impl GitEngineState {
             .map(|handle| handle.path.clone())
     }
 
+    /// Stages and commits any pending edits an agent left in a task's sandbox worktree, onto
+    /// that worktree's own `task/<id>` branch — mirrors `commit_handoff`'s stage-diff-commit
+    /// shape. Without this, a task's branch would sit forever at the commit it forked from
+    /// (whatever the agent wrote would be real files on disk, just never committed), and
+    /// `merge_task_into_staging` would have nothing to merge. Returns `Ok(false)` (not an
+    /// error) when the agent produced no file changes — a legitimate, if unusual, outcome.
+    pub fn commit_task_worktree(&self, project_id: &str, task_id: &str) -> Result<bool, String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
+        let path = {
+            let task_worktrees = self.task_worktrees.lock().unwrap();
+            task_worktrees
+                .get(&(project_id.to_string(), task_id.to_string()))
+                .map(|handle| handle.path.clone())
+                .ok_or_else(|| format!("No active worktree for task '{}'", task_id))?
+        };
+
+        let repo = Repository::open(&path).map_err(|e| e.to_string())?;
+
+        let mut index = repo.index().map_err(|e| e.to_string())?;
+        index
+            .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
+            .map_err(|e| e.to_string())?;
+        index.write().map_err(|e| e.to_string())?;
+
+        let parent = repo
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map_err(|e| e.to_string())?;
+        let base_tree = parent.tree().map_err(|e| e.to_string())?;
+        let new_tree_oid = index.write_tree().map_err(|e| e.to_string())?;
+        let new_tree = repo.find_tree(new_tree_oid).map_err(|e| e.to_string())?;
+
+        let diff = repo
+            .diff_tree_to_tree(Some(&base_tree), Some(&new_tree), None)
+            .map_err(|e| e.to_string())?;
+        let stats = diff.stats().map_err(|e| e.to_string())?;
+        if stats.files_changed() == 0 {
+            return Ok(false);
+        }
+
+        let sig = repo
+            .signature()
+            .or_else(|_| Signature::now("Central Agent", "agent@central.local"))
+            .map_err(|e| e.to_string())?;
+        let message = format!("Task: {}", task_id);
+        repo.commit(Some("HEAD"), &sig, &sig, &message, &new_tree, &[&parent])
+            .map_err(|e| e.to_string())?;
+
+        Ok(true)
+    }
+
     /// Merges a task's `task/<id>` branch into the run's `central/staging` branch without ever
     /// touching a working directory (git2's `merge_commits` operates purely on the object
     /// database), so this can run concurrently with other tasks still executing in their own
@@ -2255,6 +2306,75 @@ mod tests {
 
         assert_eq!(first, second);
         assert!(!second.join("scratch.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn commit_task_worktree_commits_agent_edits_and_advances_the_task_branch() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+        let wt_path = state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+        std::fs::write(wt_path.join("agent-output.txt"), "hello\n").unwrap();
+
+        let committed = state.commit_task_worktree("proj-a", "task-1").unwrap();
+        assert!(committed);
+
+        let repo = Repository::open(&repo_root).unwrap();
+        let task_branch = repo
+            .find_branch("task/task-1", git2::BranchType::Local)
+            .unwrap();
+        let staging = repo
+            .find_branch(STAGING_BRANCH, git2::BranchType::Local)
+            .unwrap();
+        assert_ne!(
+            task_branch.get().peel_to_commit().unwrap().id(),
+            staging.get().peel_to_commit().unwrap().id()
+        );
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn commit_task_worktree_returns_false_when_agent_made_no_changes() {
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+        state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+
+        let committed = state.commit_task_worktree("proj-a", "task-1").unwrap();
+        assert!(!committed);
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[test]
+    fn commit_task_worktree_then_merge_into_staging_lands_the_files() {
+        // End-to-end regression for the missing-commit bug: an agent writing files into its
+        // task worktree, without an explicit commit step in between, must still reach
+        // central/staging via the normal commit -> merge flow.
+        let repo_root = init_test_repo();
+        let state = GitEngineState::default();
+        state.reset_staging("proj-a", &repo_root).unwrap();
+        let wt_path = state
+            .create_task_worktree("proj-a", &repo_root, "task-1")
+            .unwrap();
+        std::fs::write(wt_path.join("agent-output.txt"), "hello\n").unwrap();
+
+        state.commit_task_worktree("proj-a", "task-1").unwrap();
+        state
+            .merge_task_into_staging("proj-a", &repo_root, "task-1")
+            .unwrap();
+
+        let staging_path = state
+            .refresh_staging_worktree("proj-a", &repo_root)
+            .unwrap();
+        assert!(staging_path.join("agent-output.txt").exists());
 
         let _ = std::fs::remove_dir_all(&repo_root);
     }

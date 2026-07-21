@@ -556,16 +556,38 @@ async fn run_single_task(
 
     match result {
         Ok((_output, 0)) => {
-            set_task_state(
-                &app,
-                &handle,
-                &task_id,
-                TaskState::Merging,
-                retry_count,
-                None,
-            )
-            .await;
-            let _ = tx.send(TaskCompletion { task_id }).await;
+            let commit_result = app
+                .state::<GitEngineState>()
+                .commit_task_worktree(&handle.project_id, &task_id);
+            eprintln!(
+                "[task {}] commit_task_worktree -> {:?}",
+                task_id, commit_result
+            );
+            match commit_result {
+                Ok(_committed) => {
+                    set_task_state(
+                        &app,
+                        &handle,
+                        &task_id,
+                        TaskState::Merging,
+                        retry_count,
+                        None,
+                    )
+                    .await;
+                    let _ = tx.send(TaskCompletion { task_id }).await;
+                }
+                Err(e) => {
+                    set_task_state(
+                        &app,
+                        &handle,
+                        &task_id,
+                        TaskState::Failed,
+                        retry_count,
+                        Some(format!("Failed to commit task worktree changes: {e}")),
+                    )
+                    .await;
+                }
+            }
         }
         Ok((output, code)) => {
             set_task_state(
