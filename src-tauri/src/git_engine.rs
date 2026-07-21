@@ -113,6 +113,14 @@ pub struct GitEngineState {
     // Keyed by project_id — the single shared worktree an orchestration run uses to check out
     // `central/staging` for running the project's test command against accumulated merges.
     staging_worktrees: Mutex<HashMap<String, PathBuf>>,
+    // libgit2 isn't safe for concurrent mutating calls against the same on-disk repo — two
+    // `git_worktree_add` calls racing to create the shared `.git/worktrees` directory can hand
+    // one of them a raw `EEXIST` instead of treating it as already-there. Every method that
+    // writes to a repo's refs/worktrees/index (as opposed to pure reads like `list_worktrees`)
+    // takes this lock for its full duration, which serializes what the orchestrator's dispatcher
+    // otherwise fires off in parallel (one `create_task_worktree` call per concurrently running
+    // task) against the same repo.
+    git_write_lock: Mutex<()>,
 }
 
 /// Name of the branch (and its per-project worktree) an orchestration run accumulates every
@@ -325,6 +333,7 @@ impl GitEngineState {
     /// Discards any ephemeral worktree left over from a previous run for these node ids within
     /// a project, so every new pipeline execution starts each agent node from a clean sandbox.
     pub fn prepare_run(&self, project_id: &str, repo_root: &Path, node_ids: &[String]) {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let repo = match Repository::open(repo_root) {
             Ok(r) => r,
             Err(_) => return,
@@ -348,6 +357,7 @@ impl GitEngineState {
         repo_root: &Path,
         node_id: &str,
     ) -> Result<PathBuf, String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let key = (project_id.to_string(), node_id.to_string());
         {
             let worktrees = self.worktrees.lock().unwrap();
@@ -406,6 +416,7 @@ impl GitEngineState {
         node_id: &str,
         target_node_id: &str,
     ) -> Result<Option<HandoffResult>, String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let (worktree_name, path, base_commit) = {
             let worktrees = self.worktrees.lock().unwrap();
             match worktrees.get(&(project_id.to_string(), node_id.to_string())) {
@@ -503,6 +514,7 @@ impl GitEngineState {
     /// throwaway worktree, never the primary working branch, so it is safe to expose as a
     /// one-click UI action.
     pub fn rollback_worktree(&self, project_id: &str, node_id: &str) -> Result<(), String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let (path, base_commit) = {
             let worktrees = self.worktrees.lock().unwrap();
             let handle = worktrees
@@ -554,6 +566,7 @@ impl GitEngineState {
         session_id: &str,
         binding: &WorkbenchBinding,
     ) -> Result<PathBuf, String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let key = (project_id.to_string(), session_id.to_string());
 
         if matches!(binding, WorkbenchBinding::Main) {
@@ -646,6 +659,7 @@ impl GitEngineState {
         repo_root: &Path,
         session_id: &str,
     ) -> Result<PromoteResult, String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let branch_name = {
             let bindings = self.bindings.lock().unwrap();
             bindings
@@ -661,6 +675,7 @@ impl GitEngineState {
     /// from a previous run. Called once at the start of every new run so tasks always branch
     /// off a clean, current base.
     pub fn reset_staging(&self, project_id: &str, repo_root: &Path) -> Result<(), String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
         let head_commit = repo
             .head()
@@ -723,6 +738,7 @@ impl GitEngineState {
         repo_root: &Path,
         task_id: &str,
     ) -> Result<PathBuf, String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
         let staging_commit = repo
             .find_branch(STAGING_BRANCH, git2::BranchType::Local)
@@ -803,6 +819,7 @@ impl GitEngineState {
         repo_root: &Path,
         task_id: &str,
     ) -> Result<(), String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let repo = Repository::open(repo_root).map_err(|e| e.to_string())?;
         let staging_branch = repo
             .find_branch(STAGING_BRANCH, git2::BranchType::Local)
@@ -895,6 +912,7 @@ impl GitEngineState {
         project_id: &str,
         repo_root: &Path,
     ) -> Result<PathBuf, String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         {
             let staging = self.staging_worktrees.lock().unwrap();
             if let Some(path) = staging.get(project_id) {
@@ -944,6 +962,7 @@ impl GitEngineState {
         _project_id: &str,
         repo_root: &Path,
     ) -> Result<PromoteResult, String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         merge_branch_into_head(repo_root, STAGING_BRANCH)
     }
 
@@ -956,6 +975,7 @@ impl GitEngineState {
         repo_root: &Path,
         session_id: &str,
     ) -> Result<(), String> {
+        let _write_guard = self.git_write_lock.lock().unwrap();
         let handle = {
             let mut bindings = self.bindings.lock().unwrap();
             bindings.remove(&(project_id.to_string(), session_id.to_string()))
